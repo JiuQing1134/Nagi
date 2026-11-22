@@ -53,15 +53,6 @@ public final class LsposedState {
         }
     }
 
-    public static void clear(Context context) {
-        active = false;
-        try {
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().remove(KEY_BOOT).remove(KEY_HOOK).apply();
-        } catch (Throwable ignored) {
-        }
-    }
-
     /** True only when this boot's OUC result hook was actually installed. */
     public static boolean isActive(Context context) {
         if (active) return true;

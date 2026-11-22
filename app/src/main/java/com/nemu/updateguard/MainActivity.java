@@ -15,6 +15,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsetsController;
@@ -35,11 +36,15 @@ import java.nio.charset.StandardCharsets;
  * manager. Nothing here suspends, disables, or freezes OUC.
  */
 public class MainActivity extends Activity {
+    private static final String TAG = "UpdateGuard";
     private static final String LSPOSED_PACKAGE = "org.lsposed.manager";
     private static final long LSPOSED_PROBE_INTERVAL_MS = 10000L;
+    private static final long LSPOSED_POLL_INTERVAL_MS = 5000L;
 
     private boolean dark;
     private long lastFeedbackAt;
+    private boolean resumed;
+    private boolean pollScheduled;
 
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private Runnable statusRestore;
@@ -90,8 +95,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        resumed = true;
         LsposedState.setListener(lsposedActivated);
-        probeLsposed(false);
+        probeLsposed(true);
         if (modeTitle != null) {
             refreshStatus();
         }
@@ -99,12 +105,15 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        resumed = false;
+        stopLsposedPoll();
         LsposedState.clearListener(lsposedActivated);
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
+        stopLsposedPoll();
         uiHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
@@ -240,25 +249,76 @@ public class MainActivity extends Activity {
     /**
      * Reads LSPosed's own module switch. The hook report only covers the
      * current boot; this probe notices a later OFF toggle in the manager.
-     * Root is used read-only when available; failure keeps the hook report.
+     * Root is used read-only. A null result means the switch is unknown, not
+     * that the old hook report is still current.
      */
     private void probeLsposed(boolean force) {
-        if (lsposedProbeRunning || !lsposedInstalled()) return;
+        if (!lsposedInstalled()) {
+            stopLsposedPoll();
+            return;
+        }
+        if (lsposedProbeRunning) return;
         long now = System.currentTimeMillis();
         if (!force && now - lsposedProbeAt < LSPOSED_PROBE_INTERVAL_MS) return;
         lsposedProbeRunning = true;
         new Thread(() -> {
-            Boolean enabled = LsposedDb.queryEnabled(this);
+            Boolean enabled;
+            try {
+                enabled = LsposedDb.queryEnabled(this);
+            } catch (Throwable t) {
+                Log.w(TAG, "lspd probe crashed", t);
+                enabled = null;
+            }
+            Boolean result = enabled;
             runOnUiThread(() -> {
                 lsposedProbeRunning = false;
                 lsposedProbeAt = System.currentTimeMillis();
-                if (enabled != null) {
-                    lsposedManagerEnabled = enabled;
-                    if (!enabled) LsposedState.clear(this);
-                    if (modeTitle != null) refreshStatus();
+                if (result != null) {
+                    if (!result.equals(lsposedManagerEnabled)) {
+                        Log.i(TAG, "manager switch=" + result);
+                    }
+                    lsposedManagerEnabled = result;
+                    // Turning the manager switch off does not unload hooks
+                    // from an already-running OUC process, so keep the hook
+                    // report primary and surface the switch as a secondary
+                    // note instead of clearing the activation state.
+                    startLsposedPoll();
+                } else if (lsposedManagerEnabled == null) {
+                    // Root unavailable and no known value: stop polling rather
+                    // than asking for root again and again. The hook report
+                    // remains primary; "刷新" retries.
+                    stopLsposedPoll();
+                } else {
+                    // A transient read failure must not erase the last known
+                    // switch state; keep it and retry on the next poll.
+                    startLsposedPoll();
                 }
+                if (modeTitle != null) refreshStatus();
             });
         }).start();
+    }
+
+    private final Runnable lsposedPoll = new Runnable() {
+        @Override
+        public void run() {
+            if (!resumed) {
+                pollScheduled = false;
+                return;
+            }
+            probeLsposed(true);
+            uiHandler.postDelayed(this, LSPOSED_POLL_INTERVAL_MS);
+        }
+    };
+
+    private void startLsposedPoll() {
+        if (!resumed || pollScheduled) return;
+        pollScheduled = true;
+        uiHandler.postDelayed(lsposedPoll, LSPOSED_POLL_INTERVAL_MS);
+    }
+
+    private void stopLsposedPoll() {
+        pollScheduled = false;
+        uiHandler.removeCallbacks(lsposedPoll);
     }
 
     /** Real-time hook report from the injected module. */
@@ -267,19 +327,27 @@ public class MainActivity extends Activity {
     };
 
     private void openLsposed() {
-        if (LsposedState.isActive(this)) {
-            // Already active: do not replace the bottom summary with a
-            // dot-less "LSPosed 已激活" for four seconds. The chip already
-            // shows the check mark and the card already shows the status.
+        if (Boolean.TRUE.equals(lsposedManagerEnabled)
+                && LsposedState.isActive(this)) {
+            // Already active and the manager switch is known to be ON: do not
+            // replace the bottom summary with a dot-less feedback message.
             refreshStatus();
             return;
         }
         String message;
-        if (LsposedState.hookFailed(this)) {
+        if (Boolean.FALSE.equals(lsposedManagerEnabled)
+                && LsposedState.isActive(this)) {
+            message = "此前软件更新的 hook 已生效，但管理器里已关闭。"
+                    + "新启动的软件更新进程不会再加载 hook；请打开管理器确认或重新启用。";
+        } else if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
+            message = "在 LSPosed 管理器中启用凪，作用域勾选“系统框架”和“软件更新”，然后重启一次。";
+        } else if (LsposedState.hookFailed(this)) {
             message = "模块已注入，但软件更新的 hook 未生效，软件更新可能已改版。"
                     + "请到 LSPosed 管理器中确认模块状态。";
         } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
             message = "模块已启用，打开软件更新后生效。";
+        } else if (LsposedState.isActive(this)) {
+            message = "当前软件更新进程的 hook 已生效。可以打开管理器查看模块开关。";
         } else {
             message = "在 LSPosed 管理器中启用凪，作用域勾选“系统框架”和“软件更新”，然后重启一次。";
         }
@@ -430,6 +498,8 @@ public class MainActivity extends Activity {
     private void styleLsposedChip() {
         if (lsposedChip == null) return;
         boolean installed = lsposedInstalled();
+        // The check mark means the OUC hook is actually installed. The
+        // manager switch is a separate state and is shown as a note.
         boolean active = LsposedState.isActive(this);
         lsposedChip.setText(active ? "✓ LSPosed" : "LSPosed");
         lsposedChip.setTextColor(active ? onAccent()
@@ -441,14 +511,19 @@ public class MainActivity extends Activity {
     private void updateModeStatus() {
         if (modeStatus == null) return;
         if (System.currentTimeMillis() - lastFeedbackAt < 3000L) return;
-        if (LsposedState.isActive(this)) {
-            modeStatus.setText("LSPosed · 已激活");
+        boolean active = LsposedState.isActive(this);
+        if (active) {
+            modeStatus.setText(Boolean.FALSE.equals(lsposedManagerEnabled)
+                    ? "LSPosed · 已激活（管理器已关）"
+                    : "LSPosed · 已激活");
         } else if (LsposedState.hookFailed(this)) {
-            modeStatus.setText("LSPosed · 已注入，hook 未生效，软件更新可能已改版");
-        } else if (!lsposedInstalled()) {
-            modeStatus.setText("未检测到 LSPosed 管理器");
+            modeStatus.setText(Boolean.FALSE.equals(lsposedManagerEnabled)
+                    ? "LSPosed · hook 未生效（管理器已关）"
+                    : "LSPosed · 已注入，hook 未生效，软件更新可能已改版");
         } else if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
             modeStatus.setText("LSPosed · 已在管理器中关闭，点芯片打开");
+        } else if (!lsposedInstalled()) {
+            modeStatus.setText("未检测到 LSPosed 管理器");
         } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
             modeStatus.setText("LSPosed · 已启用，打开软件更新后生效");
         } else {
@@ -543,22 +618,29 @@ public class MainActivity extends Activity {
     }
 
     private void refreshStatus() {
-        if (LsposedState.isActive(this)) {
+        boolean active = LsposedState.isActive(this);
+        if (active) {
+            // Hook success is the primary activation state. The manager
+            // switch is a separate configuration and is only a note here.
             modeTitle.setText("LSPosed");
-            modeSubtitle.setText("已激活，软件更新已返回最新");
+            modeSubtitle.setText(Boolean.FALSE.equals(lsposedManagerEnabled)
+                    ? "已激活（管理器已关闭，新进程不再生效）"
+                    : "已激活，软件更新已返回最新");
             modeDot.setBackground(rounded(accent(), 999, 0));
         } else if (LsposedState.hookFailed(this)) {
             modeTitle.setText("LSPosed");
-            modeSubtitle.setText("已注入，hook 未生效");
+            modeSubtitle.setText(Boolean.FALSE.equals(lsposedManagerEnabled)
+                    ? "已注入，hook 未生效（管理器已关闭）"
+                    : "已注入，hook 未生效");
+            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+        } else if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
+            modeTitle.setText("LSPosed");
+            modeSubtitle.setText("已在管理器中关闭");
             modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
         } else if (!lsposedInstalled()) {
             modeTitle.setText("未安装 LSPosed");
             modeSubtitle.setText("需要 LSPosed 管理器");
             modeDot.setBackground(rounded(mutedDot(), 999, 0));
-        } else if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
-            modeTitle.setText("LSPosed");
-            modeSubtitle.setText("已在管理器中关闭");
-            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
         } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
             modeTitle.setText("LSPosed");
             modeSubtitle.setText("已启用，打开软件更新后生效");
