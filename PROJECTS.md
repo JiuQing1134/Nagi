@@ -31,15 +31,15 @@
 - **GitHub**：https://github.com/JiuQing1134/Nagi
 - **applicationId**：`com.nemu.windstop`
 - **源码命名空间**：`com.nemu.updateguard`
-- **版本**：`1.3.7` / `versionCode 13`
+- **版本**：`1.3.8` / `versionCode 16`
 - **APK**：`D:\win_root\nemu-update-guard\app\build\outputs\apk\release\app-release.apk`
-  - 2,146,754 字节
-  - SHA-256：`a258d9f0b11e2496dd705a5d8fb21cc626ff034cc553ada370baeaa440c42b0a`
+  - 2,146,774 字节
+  - SHA-256：`23d8bbf8ad607e6dad352b59e1b6d59a22208427b1884e13a074302f8b3785d0`
 - **开源协议**：CC BY-NC 4.0（署名—非商业性使用 4.0 国际），Copyright (c) 2026 JiuQing，见 [LICENSE](LICENSE)。
 - **文档**：
   - `D:\win_root\nemu\docs\14-update-guard.md`
   - `D:\win_root\nemu\docs\15-task-status-2026-11-22.md`
-- **用途**：仅通过 LSPosed 让 OUC 更新检查显示“已是最新”，不冻结/不卸载 OUC，不修改系统版本号。
+- **用途**：仅通过 LSPosed 让软件更新显示“已是最新”，不冻结/不卸载 OUC，不修改系统版本号。
 - **LSPosed**：作用域 `系统框架 (system)` + `软件更新 (com.hihonor.ouc)`；模块开关关闭/已启用待注入/hook 未生效/已激活四态会实时显示。
 - **图标**：白底翠绿三角回环，圆点位于正中心。
 

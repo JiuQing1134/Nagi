@@ -1,10 +1,10 @@
 # 凪（Nagi）
 
-让 HONOR 系统更新（`com.hihonor.ouc`）的检查结果显示“当前系统已是最新”的独立 App。
+让 HONOR 软件更新（`com.hihonor.ouc`）显示“当前系统已是最新”的独立 App。
 不冻结、不卸载 OUC，不修改系统版本号。
 
 - **applicationId**：`com.nemu.windstop`（源码命名空间 `com.nemu.updateguard`）
-- **版本**：`1.3.7` / `versionCode 13`
+- **版本**：`1.3.8` / `versionCode 16`
 - **图标**：白底翠绿三角回环，圆点位于正中心；名字是 **凪**。
 - **配套项目（Nemu / 眠梦）**：https://github.com/JiuQing1134/Nemu
 - **完整地址与产物**：[`PROJECTS.md`](PROJECTS.md)
@@ -24,7 +24,7 @@ App 会实时显示 LSPosed 的四种状态：
 | 管理器里关闭 | 已在管理器中关闭 | 弹说明框并跳转管理器 |
 | 已启用、尚未注入 | 已启用，打开软件更新后生效 | 弹说明框并跳转管理器 |
 | 已注入但 hook 失败 | 已注入，hook 未生效，OUC 可能已更新 | 弹说明框并跳转管理器 |
-| 已注入且 hook 成功 | 已激活，更新检查返回已最新 | 提示已激活 |
+| 已注入且 hook 成功 | 已激活，软件更新已返回最新 | 提示已激活 |
 
 > 覆盖安装新 APK 后，LSPosed 可能自动把模块开关置为关闭；到 LSPosed 里重新打开并重启即可。App 会立即显示关闭状态。
 

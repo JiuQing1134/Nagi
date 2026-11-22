@@ -31,7 +31,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="让荣耀系统更新检查始终认为当前已是最新版本；不会修改系统版本号。"
+            android:value="让荣耀软件更新始终显示已是最新版本；不会修改系统版本号。"
         />
         <meta-data
             android:name="xposedminversion"

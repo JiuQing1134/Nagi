@@ -150,7 +150,7 @@ public class MainActivity extends Activity {
         TextView title = text("凪", 27, textColor(), true);
         title.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
         texts.addView(title);
-        TextView subtitle = text("让更新检查始终保持最新版本", 13, subColor(), false);
+        TextView subtitle = text("让软件更新始终显示最新版本", 13, subColor(), false);
         subtitle.setPadding(0, dp(4), 0, 0);
         texts.addView(subtitle);
         card.addView(texts, new LinearLayout.LayoutParams(
@@ -274,7 +274,7 @@ public class MainActivity extends Activity {
         }
         String message;
         if (LsposedState.hookFailed(this)) {
-            message = "模块已注入，但 OUC 的 hook 未生效，OUC 可能已更新。"
+            message = "模块已注入，但软件更新的 hook 未生效，软件更新可能已改版。"
                     + "请到 LSPosed 管理器中确认模块状态。";
         } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
             message = "模块已启用，打开软件更新后生效。";
@@ -349,7 +349,7 @@ public class MainActivity extends Activity {
             if (installed != null && !installed.isEmpty()) return installed;
         } catch (Throwable ignored) {
         }
-        return "1.3.7";
+        return "1.3.8";
     }
 
     private void showLicense() {
@@ -440,9 +440,9 @@ public class MainActivity extends Activity {
         if (modeStatus == null) return;
         if (System.currentTimeMillis() - lastFeedbackAt < 3000L) return;
         if (LsposedState.isActive(this)) {
-            modeStatus.setText("LSPosed · 已激活，更新检查返回已最新");
+            modeStatus.setText("LSPosed · 已激活，软件更新已返回最新");
         } else if (LsposedState.hookFailed(this)) {
-            modeStatus.setText("LSPosed · 已注入，hook 未生效，OUC 可能已更新");
+            modeStatus.setText("LSPosed · 已注入，hook 未生效，软件更新可能已改版");
         } else if (!lsposedInstalled()) {
             modeStatus.setText("未检测到 LSPosed 管理器");
         } else if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
@@ -543,7 +543,7 @@ public class MainActivity extends Activity {
     private void refreshStatus() {
         if (LsposedState.isActive(this)) {
             modeTitle.setText("LSPosed");
-            modeSubtitle.setText("已激活，更新检查返回已最新");
+            modeSubtitle.setText("已激活，软件更新已返回最新");
             modeDot.setBackground(rounded(accent(), 999, 0));
         } else if (LsposedState.hookFailed(this)) {
             modeTitle.setText("LSPosed");
