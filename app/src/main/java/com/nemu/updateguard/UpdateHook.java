@@ -1,5 +1,6 @@
 package com.nemu.updateguard;
 
+import android.annotation.SuppressLint;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -10,6 +11,8 @@ import android.os.Build;
 import android.os.IBinder;
 import android.os.Message;
 import android.os.Messenger;
+
+import android.app.AndroidAppHelper;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -32,6 +35,7 @@ public class UpdateHook implements IXposedHookLoadPackage {
     private static final String RESULT_CLASS =
             "com.hihonor.android.hnouc.check.model.result.a";
     private static volatile boolean reportReceiverRegistered = false;
+    private static volatile boolean fallbackReportTried = false;
 
     @Override
     public void handleLoadPackage(LoadPackageParam lpparam) {
@@ -47,6 +51,8 @@ public class UpdateHook implements IXposedHookLoadPackage {
      * that renders the update page.
      */
     private void hookOuc(LoadPackageParam lpparam) {
+        final boolean mainProcess = lpparam.processName == null
+                || OUC.equals(lpparam.processName);
         boolean hooked = false;
         try {
             Class<?> result = XposedHelpers.findClass(
@@ -55,6 +61,23 @@ public class UpdateHook implements IXposedHookLoadPackage {
                     new XC_MethodReplacement() {
                         @Override
                         protected Object replaceHookedMethod(MethodHookParam param) {
+                            // Fallback for the case where hooking
+                            // Application.onCreate fails but this result hook
+                            // still works: register the request receiver and
+                            // report from the first real d() call.
+                            if (mainProcess && !fallbackReportTried) {
+                                try {
+                                    Context app = AndroidAppHelper.currentApplication();
+                                    if (app != null) {
+                                        fallbackReportTried = true;
+                                        registerReportReceiver(app, true);
+                                        reportActive(app, true);
+                                    }
+                                } catch (Throwable t) {
+                                    XposedBridge.log(
+                                            "UpdateGuard: fallback report failed: " + t);
+                                }
+                            }
                             return Boolean.FALSE;
                         }
                     });
@@ -64,8 +87,6 @@ public class UpdateHook implements IXposedHookLoadPackage {
             XposedBridge.log("UpdateGuard: OUC hook failed: " + t);
         }
         final boolean hookOk = hooked;
-        final boolean mainProcess = lpparam.processName == null
-                || OUC.equals(lpparam.processName);
         try {
             XposedHelpers.findAndHookMethod(
                     android.app.Application.class, "onCreate",
@@ -91,6 +112,7 @@ public class UpdateHook implements IXposedHookLoadPackage {
      * Application.onCreate. The request broadcast carries no trusted data;
      * the actual report still goes through the UID-checked service.
      */
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     private static void registerReportReceiver(
             final Context context, final boolean hookOk) {
         if (reportReceiverRegistered) return;

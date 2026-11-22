@@ -1,6 +1,7 @@
 package com.nemu.updateguard;
 
 import android.content.Context;
+import android.os.SystemClock;
 import android.provider.Settings;
 
 /**
@@ -20,6 +21,8 @@ public final class LsposedState {
     private static final String KEY_HOOK = "hook";
 
     public static volatile boolean active = false;
+    /** elapsedRealtime of the latest verified report in this process. */
+    public static volatile long lastReportElapsed = 0L;
     private static volatile Runnable listener;
 
     private LsposedState() {
@@ -35,6 +38,7 @@ public final class LsposedState {
 
     /** Records a verified OUC hook result for the current boot. */
     public static void mark(Context context, boolean hookOk) {
+        lastReportElapsed = SystemClock.elapsedRealtime();
         active = hookOk;
         try {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

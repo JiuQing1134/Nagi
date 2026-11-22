@@ -5,6 +5,7 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.util.Log;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -51,21 +52,52 @@ final class LsposedDb {
             }
             File db = new File(dir, "modules_config.db");
             File wal = new File(dir, "modules_config.db-wal");
-            if (!copyAsRoot(SRC_DB, db, true)) {
-                Log.w(TAG, "lspd probe: main db copy failed");
+            // Copying the main DB and WAL with two root calls is not atomic.
+            // Take a source stat before and after; if LSPosed wrote or
+            // checkpointed in between, retry once instead of trusting a torn
+            // snapshot. The -shm file is not copied: it is a transient index
+            // that SQLite rebuilds from the WAL.
+            boolean stable = false;
+            for (int attempt = 0; attempt < 2 && !stable; attempt++) {
+                String before = statAsRoot();
+                if (before.isEmpty()) {
+                    Log.w(TAG, "lspd probe: source stat failed");
+                    return null;
+                }
+                boolean walHasData = ProbeStat.walHasData(before);
+                if (!copyAsRoot(SRC_DB, db, true)) {
+                    Log.w(TAG, "lspd probe: main db copy failed");
+                    continue;
+                }
+                if (walHasData) {
+                    if (!copyAsRoot(SRC_DB + "-wal", wal, true)) {
+                        Log.w(TAG, "lspd probe: wal copy failed");
+                        continue;
+                    }
+                } else if (wal.exists() && !wal.delete()) {
+                    Log.w(TAG, "lspd probe: stale wal target could not be removed");
+                    return null;
+                }
+                String after = statAsRoot();
+                if (after.isEmpty()) {
+                    Log.w(TAG, "lspd probe: source stat after copy failed");
+                    continue;
+                }
+                if (before.equals(after)) {
+                    stable = true;
+                } else {
+                    Log.w(TAG, "lspd probe: source changed during copy, retrying");
+                }
+            }
+            if (!stable) {
+                Log.w(TAG, "lspd probe: unstable snapshot");
                 return null;
             }
-            // The -shm file is a transient WAL index, not a persistent part of
-            // the database. Copying it can make SQLite trust an index that no
-            // longer matches the copied WAL; without it SQLite rebuilds the
-            // index from the WAL, so only the db and wal are copied.
-            copyAsRoot(SRC_DB + "-wal", wal, false);
 
             SQLiteDatabase sql = SQLiteDatabase.openDatabase(
                     db.getAbsolutePath(), null, SQLiteDatabase.OPEN_READWRITE);
             try {
-                Boolean enabled = queryEnabled(sql);
-                if (enabled == null) return null;
+                boolean enabled = queryEnabled(sql);
                 Boolean oucScoped = null;
                 try {
                     oucScoped = queryOucScope(sql);
@@ -85,7 +117,7 @@ final class LsposedDb {
         }
     }
 
-    private static Boolean queryEnabled(SQLiteDatabase sql) {
+    private static boolean queryEnabled(SQLiteDatabase sql) {
         Cursor c = sql.rawQuery(
                 "SELECT enabled FROM modules_state "
                         + "WHERE module_pkg_name=? AND user_id=0",
@@ -95,7 +127,9 @@ final class LsposedDb {
         } finally {
             c.close();
         }
-        return null;
+        // No row means the module is not registered/enabled, not that the
+        // database read failed.
+        return false;
     }
 
     private static Boolean queryOucScope(SQLiteDatabase sql) {
@@ -107,6 +141,56 @@ final class LsposedDb {
             return c.moveToFirst();
         } finally {
             c.close();
+        }
+    }
+
+    private static String statAsRoot() {
+        String command = "stat -c '%s:%y' " + SRC_DB
+                + " 2>/dev/null || echo DB_MISSING; echo '---'; "
+                + "stat -c '%s:%y' " + SRC_DB + "-wal"
+                + " 2>/dev/null || echo WAL_MISSING";
+        return runAsRoot(command, 15);
+    }
+
+    /** Runs a short fixed root command and returns its stdout, or "". */
+    private static String runAsRoot(String command, int timeoutSeconds) {
+        Process process = null;
+        try {
+            process = Runtime.getRuntime().exec(new String[]{"su", "-c", command});
+            final Process running = process;
+            final ByteArrayOutputStream out = new ByteArrayOutputStream();
+            Thread pump = new Thread(() -> {
+                try (InputStream in = running.getInputStream()) {
+                    byte[] buffer = new byte[4096];
+                    int read;
+                    while ((read = in.read(buffer)) != -1) {
+                        out.write(buffer, 0, read);
+                    }
+                } catch (Throwable t) {
+                    Log.w(TAG, "lspd stat pump failed", t);
+                }
+            }, "lspd-stat");
+            pump.setDaemon(true);
+            pump.start();
+            boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroy();
+                pump.join(1000);
+                Log.w(TAG, "lspd stat timeout");
+                return "";
+            }
+            int exit = process.exitValue();
+            pump.join(2000);
+            if (exit != 0) {
+                Log.w(TAG, "lspd stat exit=" + exit);
+                return "";
+            }
+            return new String(out.toByteArray(), StandardCharsets.UTF_8).trim();
+        } catch (Throwable t) {
+            Log.w(TAG, "lspd stat failed", t);
+            return "";
+        } finally {
+            if (process != null) process.destroy();
         }
     }
 

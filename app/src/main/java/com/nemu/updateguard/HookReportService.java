@@ -43,6 +43,9 @@ public class HookReportService extends Service {
 
     @Override
     public IBinder onBind(Intent intent) {
+        // Binder.getCallingUid() here is the service process itself (the
+        // manager calls onBind), not the client that called bindService.
+        // The caller is verified per message via Message.sendingUid.
         return messenger.getBinder();
     }
 

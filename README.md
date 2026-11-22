@@ -4,7 +4,7 @@
 不冻结、不卸载 OUC，不修改系统版本号。
 
 - **applicationId**：`com.nemu.windstop`（源码命名空间 `com.nemu.updateguard`）
-- **版本**：`1.3.8` / `versionCode 33`
+- **版本**：`1.3.8` / `versionCode 34`
 - **图标**：白底翠绿三角回环，圆点位于正中心；名字是 **凪**。
 - **配套项目（Nemu / 眠梦）**：https://github.com/JiuQing1134/Nemu
 - **完整地址与产物**：[`PROJECTS.md`](PROJECTS.md)
@@ -17,35 +17,48 @@
 - 1.3.5 起删除了独立模式（无障碍覆盖层）及 Root / Shizuku / ADB 通道。
   没有 LSPosed 时，本 App 不会拦截更新。
 
-> “已激活”以 OUC 进程内的 hook 是否成功为准。LSPosed 管理器开关是另一层配置：
-> 关闭管理器开关不会卸载已经运行的 OUC 进程中的 hook，只影响新进程。
-> App 每次进入前台（启动/从后台切回）或点“刷新”时，通过 root 只读查询一次管理器的
-> `modules_state` 和作用域；没有周期轮询。管理器关闭时仍显示
-> “已激活”，并注明“管理器已关闭，新进程不再生效”。没有 Root 授权时只按 hook 报告显示，不影响激活状态。
-> 首次授权弹窗若超过 15 秒未处理，本次探测会超时；点“刷新”可以重新发起。
+> “已激活”只以**这次进入前台/点刷新后收到的 fresh hook 报告**为准。App 会发一次请求广播；
+> OUC 主进程如果已 hook，会在约 0.5 秒内通过 `HookReportService` 重报。超过 2 秒没有报告，
+> 就不再沿用旧报告的“已激活”，显示“当前软件更新进程未上报（上次 hook 已生效）”。
+> LSPosed 管理器开关/作用域是另一层配置：关闭只影响新进程，不会卸载已运行 OUC 进程里的 hook。
+>
+> App 每次进入前台（启动/从后台切回）或点“刷新”时，通过 root 只读查询一次管理器
+> `modules_state` 和 `scope`；没有周期轮询。复制 DB/WAL 前后会做 stat 校验，源文件在复制期间
+> 变化就重试，避免读到撕裂快照。管理器状态读取失败时显示“管理器状态读取失败，点刷新重试”，
+> 不会继续把旧的管理器状态当成当前状态；没有 Root 授权时管理器状态会读取失败，fresh hook
+> 状态仍然可用。
 
-App 会在每次进入前台/点“刷新”时显示 LSPosed 的状态（管理器关闭但当前 hook 仍生效时单独注明）：
+App 会在每次进入前台/点“刷新”时显示 LSPosed 的状态：
 
 | 状态 | 显示 | 点芯片 |
 |---|---|---|
 | 管理器里关闭、当前没有 hook 报告 | 已在管理器中关闭 | 弹说明框并跳转管理器 |
 | 已启用、尚未注入 | 已启用，重启软件更新后生效 | 弹说明框并跳转管理器 |
 | 已启用但作用域未勾选软件更新 | 已启用，但作用域未勾选软件更新 | 弹说明框并跳转管理器 |
-| 已注入但 hook 失败 | 已注入，hook 未生效，OUC 可能已更新 | 弹说明框并跳转管理器 |
-| 已注入且 hook 成功 | 已激活，软件更新已返回最新 | 打开 LSPosed 管理器 |
-| hook 成功但管理器已关闭 | 已激活（管理器已关闭，新进程不再生效） | 说明新进程不再生效 |
+| fresh hook 失败 | 已注入，hook 未生效，OUC 可能已更新 | 弹说明框并跳转管理器 |
+| 本次前台收到 hook 成功报告 | 已激活，软件更新已返回最新 | 打开 LSPosed 管理器 |
+| fresh hook 成功但管理器已关闭 | 已激活（管理器已关闭，新进程不再生效） | 说明新进程不再生效 |
+| 本次前台 2 秒内没有 hook 报告 | 已启用，当前软件更新进程未上报（上次 hook 已生效） | 弹说明框/打开管理器 |
+| 管理器状态读取失败 | 管理器状态读取失败，点刷新重试 | 弹说明框并跳转管理器 |
 
 App 会同时读取 LSPosed 的 `scope` 表，确认 `com.hihonor.ouc` 仍在作用域；取消勾选会提示“作用域未勾选软件更新”。
 
-> 覆盖安装新 APK 后，LSPosed 可能自动把模块开关置为关闭；到 LSPosed 里重新打开并重启即可。App 会在下一次探测时显示管理器已关闭，但已运行 OUC 进程的 hook 仍按 hook 优先显示。
+> 覆盖安装新 APK 后，LSPosed 可能自动把模块开关置为关闭；到 LSPosed 里重新打开并重启即可。
+> App 在下一次进入前台/点刷新时显示管理器已关闭；只有本次前台收到新的 hook 报告才会显示“已激活”，
+> 旧报告不会继续冒充当前激活。
 
 ## 构建
 
 ```powershell
 cd D:\win_root\nemu-update-guard
 .\gradlew.bat :app:assembleDebug
+.\gradlew.bat :app:testDebugUnitTest :app:lintRelease
 .\gradlew.bat :app:assembleRelease
 ```
+
+`testDebugUnitTest` 覆盖 stat 快照解析；`lintRelease` 目前 0 errors（SetTextI18n 等中文硬编码
+仍是 warning）。`.github/workflows/android.yml` 会在 push/PR 时跑测试、lint、release 构建。
+Release 构建在 CI/没有 `keystore.properties` 的机器上会 fallback 到 debug 签名并打印警告。
 
 Release APK：`app/build/outputs/apk/release/app-release.apk`。
 没有 `keystore.properties` 时，release 复用 debug 签名（可覆盖现有 debug 安装，但 `debuggable=false`）；
@@ -61,6 +74,9 @@ Release APK：`app/build/outputs/apk/release/app-release.apk`。
 证书 SHA-256：`1F:45:7A:B9:F6:82:68:E0:20:31:44:6C:CF:6F:F5:2A:5E:ED:AE:42:5F:AF:AB:53:B9:8E:5A:6F:04:82:61:BB`。
 密码在 `keystore.properties` 里；丢失 keystore 或密码后无法覆盖更新，只能卸载重装。
 安装私有签名版时已卸载旧的 debug 签名版，凪的 prefs 已清空，LSPosed 配置未动。
+换签名/卸载重装后，FinaSU/KernelSU 的 allowlist 条目会随卸载删除；重新安装后需要在 App Profile
+重新授权 root，并重启 OUC 让模块重新加载。否则管理器开关探测会显示“管理器状态读取失败”
+（hook 状态本身不受影响）。
 
 依赖：`compileOnly` Xposed API 82（`app/libs/api-82.jar`）。
 LSPosed 入口：`assets/xposed_init` → `com.nemu.updateguard.UpdateHook`。
