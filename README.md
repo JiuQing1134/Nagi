@@ -4,7 +4,7 @@
 不冻结、不卸载 OUC，不修改系统版本号。
 
 - **applicationId**：`com.nemu.windstop`（源码命名空间 `com.nemu.updateguard`）
-- **版本**：`1.3.8` / `versionCode 34`
+- **版本**：`1.3.8` / `versionCode 35`
 - **图标**：白底翠绿三角回环，圆点位于正中心；名字是 **凪**。
 - **配套项目（Nemu / 眠梦）**：https://github.com/JiuQing1134/Nemu
 - **完整地址与产物**：[`PROJECTS.md`](PROJECTS.md)
@@ -20,11 +20,14 @@
 > “已激活”只以**这次进入前台/点刷新后收到的 fresh hook 报告**为准。App 会发一次请求广播；
 > OUC 主进程如果已 hook，会在约 0.5 秒内通过 `HookReportService` 重报。超过 2 秒没有报告，
 > 就不再沿用旧报告的“已激活”，显示“当前软件更新进程未上报（上次 hook 已生效）”。
-> LSPosed 管理器开关/作用域是另一层配置：关闭只影响新进程，不会卸载已运行 OUC 进程里的 hook。
+> 如果 OUC 进程在凪保持前台时退出，报告的 Binder death 会立即把上次报告标为失效，
+> 不需要轮询。LSPosed 管理器开关/作用域是另一层配置：关闭只影响新进程，不会卸载已运行
+> OUC 进程里的 hook。
 >
 > App 每次进入前台（启动/从后台切回）或点“刷新”时，通过 root 只读查询一次管理器
 > `modules_state` 和 `scope`；没有周期轮询。复制 DB/WAL 前后会做 stat 校验，源文件在复制期间
-> 变化就重试，避免读到撕裂快照。管理器状态读取失败时显示“管理器状态读取失败，点刷新重试”，
+> 变化就重试，避免读到撕裂快照；stat 本身失败会返回未知，不会把“stat 失败”当成“WAL 不存在”。
+> 管理器状态读取失败时显示“管理器状态读取失败，点刷新重试”，已有已知状态时会静默重试一次；
 > 不会继续把旧的管理器状态当成当前状态；没有 Root 授权时管理器状态会读取失败，fresh hook
 > 状态仍然可用。
 
@@ -38,7 +41,7 @@ App 会在每次进入前台/点“刷新”时显示 LSPosed 的状态：
 | fresh hook 失败 | 已注入，hook 未生效，OUC 可能已更新 | 弹说明框并跳转管理器 |
 | 本次前台收到 hook 成功报告 | 已激活，软件更新已返回最新 | 打开 LSPosed 管理器 |
 | fresh hook 成功但管理器已关闭 | 已激活（管理器已关闭，新进程不再生效） | 说明新进程不再生效 |
-| 本次前台 2 秒内没有 hook 报告 | 已启用，当前软件更新进程未上报（上次 hook 已生效） | 弹说明框/打开管理器 |
+| 本次前台 2 秒内没有 hook 报告，或 OUC 进程已退出 | 已启用，当前软件更新进程未上报（上次 hook 已生效） | 弹说明框/打开管理器 |
 | 管理器状态读取失败 | 管理器状态读取失败，点刷新重试 | 弹说明框并跳转管理器 |
 
 App 会同时读取 LSPosed 的 `scope` 表，确认 `com.hihonor.ouc` 仍在作用域；取消勾选会提示“作用域未勾选软件更新”。
@@ -56,9 +59,11 @@ cd D:\win_root\nemu-update-guard
 .\gradlew.bat :app:assembleRelease
 ```
 
-`testDebugUnitTest` 覆盖 stat 快照解析；`lintRelease` 目前 0 errors（SetTextI18n 等中文硬编码
-仍是 warning）。`.github/workflows/android.yml` 会在 push/PR 时跑测试、lint、release 构建。
-Release 构建在 CI/没有 `keystore.properties` 的机器上会 fallback 到 debug 签名并打印警告。
+`testDebugUnitTest` 9 项通过（`ProbeStatTest` 5 项 + `StatusModelTest` 4 项）；
+`lintRelease` 目前 **0 errors / 0 warnings**（中文硬编码、adaptive icon -v26、targetSdk 36
+都在 `lint.xml`/manifest 里注明了有意忽略）。`.github/workflows/android.yml` 会在 push/PR 时
+跑测试、lint、release 构建。Release 构建在 CI/没有 `keystore.properties` 的机器上会 fallback
+到 debug 签名并打印警告。
 
 Release APK：`app/build/outputs/apk/release/app-release.apk`。
 没有 `keystore.properties` 时，release 复用 debug 签名（可覆盖现有 debug 安装，但 `debuggable=false`）；

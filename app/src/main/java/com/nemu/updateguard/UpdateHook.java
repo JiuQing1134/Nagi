@@ -7,10 +7,13 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.os.Binder;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Message;
 import android.os.Messenger;
+import android.os.Process;
 
 import android.app.AndroidAppHelper;
 
@@ -34,6 +37,7 @@ public class UpdateHook implements IXposedHookLoadPackage {
     private static final String OUC = "com.hihonor.ouc";
     private static final String RESULT_CLASS =
             "com.hihonor.android.hnouc.check.model.result.a";
+    private static final Binder PROCESS_TOKEN = new Binder();
     private static volatile boolean reportReceiverRegistered = false;
     private static volatile boolean fallbackReportTried = false;
 
@@ -68,9 +72,9 @@ public class UpdateHook implements IXposedHookLoadPackage {
                             if (mainProcess && !fallbackReportTried) {
                                 try {
                                     Context app = AndroidAppHelper.currentApplication();
-                                    if (app != null) {
+                                    if (app != null
+                                            && registerReportReceiver(app, true)) {
                                         fallbackReportTried = true;
-                                        registerReportReceiver(app, true);
                                         reportActive(app, true);
                                     }
                                 } catch (Throwable t) {
@@ -113,9 +117,9 @@ public class UpdateHook implements IXposedHookLoadPackage {
      * the actual report still goes through the UID-checked service.
      */
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
-    private static void registerReportReceiver(
+    private static boolean registerReportReceiver(
             final Context context, final boolean hookOk) {
-        if (reportReceiverRegistered) return;
+        if (reportReceiverRegistered) return true;
         reportReceiverRegistered = true;
         try {
             BroadcastReceiver receiver = new BroadcastReceiver() {
@@ -134,9 +138,11 @@ public class UpdateHook implements IXposedHookLoadPackage {
                 context.registerReceiver(receiver, filter);
             }
             XposedBridge.log("UpdateGuard: hook report receiver registered");
+            return true;
         } catch (Throwable t) {
             reportReceiverRegistered = false;
             XposedBridge.log("UpdateGuard: hook report receiver failed: " + t);
+            return false;
         }
     }
 
@@ -159,6 +165,10 @@ public class UpdateHook implements IXposedHookLoadPackage {
                                 Message message = Message.obtain(
                                         null, HookReportService.MSG_REPORT);
                                 message.arg1 = hookOk ? 1 : 0;
+                                message.arg2 = Process.myPid();
+                                Bundle data = new Bundle();
+                                data.putBinder("token", PROCESS_TOKEN);
+                                message.setData(data);
                                 new Messenger(binder).send(message);
                             } catch (Throwable t) {
                                 XposedBridge.log(

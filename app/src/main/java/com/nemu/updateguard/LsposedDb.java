@@ -64,6 +64,10 @@ final class LsposedDb {
                     Log.w(TAG, "lspd probe: source stat failed");
                     return null;
                 }
+                if (ProbeStat.hasError(before)) {
+                    Log.w(TAG, "lspd probe: source stat error");
+                    return null;
+                }
                 boolean walHasData = ProbeStat.walHasData(before);
                 if (!copyAsRoot(SRC_DB, db, true)) {
                     Log.w(TAG, "lspd probe: main db copy failed");
@@ -81,6 +85,10 @@ final class LsposedDb {
                 String after = statAsRoot();
                 if (after.isEmpty()) {
                     Log.w(TAG, "lspd probe: source stat after copy failed");
+                    continue;
+                }
+                if (ProbeStat.hasError(after)) {
+                    Log.w(TAG, "lspd probe: source stat after copy error");
                     continue;
                 }
                 if (before.equals(after)) {
@@ -145,10 +153,14 @@ final class LsposedDb {
     }
 
     private static String statAsRoot() {
-        String command = "stat -c '%s:%y' " + SRC_DB
-                + " 2>/dev/null || echo DB_MISSING; echo '---'; "
+        String command = "if [ -e " + SRC_DB + " ]; then "
+                + "stat -c '%s:%y' " + SRC_DB
+                + " 2>/dev/null || echo DB_ERROR; "
+                + "else echo DB_MISSING; fi; echo '---'; "
+                + "if [ -e " + SRC_DB + "-wal" + " ]; then "
                 + "stat -c '%s:%y' " + SRC_DB + "-wal"
-                + " 2>/dev/null || echo WAL_MISSING";
+                + " 2>/dev/null || echo WAL_ERROR; "
+                + "else echo WAL_MISSING; fi";
         return runAsRoot(command, 15);
     }
 

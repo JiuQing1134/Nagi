@@ -1,5 +1,6 @@
 package com.nemu.updateguard;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.NotificationManager;
@@ -35,6 +36,8 @@ import java.nio.charset.StandardCharsets;
  * HookReportService; this screen displays that state and opens the LSPosed
  * manager. Nothing here suspends, disables, or freezes OUC.
  */
+// Chinese-only UI; all status strings are intentional and not localized.
+@SuppressLint("SetTextI18n")
 public class MainActivity extends Activity {
     private static final String TAG = "UpdateGuard";
     private static final String OUC_PACKAGE = "com.hihonor.ouc";
@@ -42,8 +45,10 @@ public class MainActivity extends Activity {
     private static final long HOOK_REPORT_TIMEOUT_MS = 2000L;
 
     private boolean dark;
+    private boolean resumed;
     private boolean hookReportFresh = false;
     private boolean hookReportPending = false;
+    private boolean lsposedProbeRetried = false;
     private long hookReportRequestedAt = 0L;
     private final Handler reportHandler = new Handler(Looper.getMainLooper());
 
@@ -67,6 +72,10 @@ public class MainActivity extends Activity {
     private volatile boolean lsposedProbeDone = false;
     private volatile boolean lsposedProbeFailed = false;
     private volatile boolean lsposedProbeRunning = false;
+
+    private final Runnable lsposedProbeRetry = () -> {
+        if (resumed) probeLsposed();
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -107,6 +116,9 @@ public class MainActivity extends Activity {
         super.onResume();
         // Check exactly once per foreground entry: app launch, or returning
         // from the background. There is deliberately no periodic polling.
+        resumed = true;
+        lsposedProbeRetried = false;
+        reportHandler.removeCallbacks(lsposedProbeRetry);
         LsposedState.setListener(lsposedActivated);
         requestHookReport();
         probeLsposed();
@@ -117,8 +129,10 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        resumed = false;
         LsposedState.clearListener(lsposedActivated);
         reportHandler.removeCallbacks(hookReportTimeout);
+        reportHandler.removeCallbacks(lsposedProbeRetry);
         hookReportPending = false;
         super.onPause();
     }
@@ -170,7 +184,7 @@ public class MainActivity extends Activity {
         TextView title = text("凪", 27, textColor(), true);
         title.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
         texts.addView(title);
-        TextView subtitle = text("软件更新始终显示“已是最新版本”", 13, subColor(), false);
+        TextView subtitle = text("让软件更新始终显示“已是最新版本”", 13, subColor(), false);
         subtitle.setPadding(0, dp(4), 0, 0);
         texts.addView(subtitle);
         card.addView(texts, new LinearLayout.LayoutParams(
@@ -264,6 +278,8 @@ public class MainActivity extends Activity {
      * installed, updated, or force-stopped.
      */
     private void requestHookReport() {
+        lsposedProbeRetried = false;
+        reportHandler.removeCallbacks(lsposedProbeRetry);
         hookReportRequestedAt = SystemClock.elapsedRealtime();
         hookReportFresh = false;
         hookReportPending = true;
@@ -320,10 +336,19 @@ public class MainActivity extends Activity {
                     }
                     lsposedManagerEnabled = result.enabled;
                     lsposedOucScoped = result.oucScoped;
+                    lsposedProbeRetried = false;
                     // Turning the manager switch off or removing OUC from the
                     // scope does not unload hooks from an already-running OUC
                     // process, so keep the hook report primary and surface the
                     // configuration as a secondary note.
+                } else if (lsposedManagerEnabled != null
+                        && !lsposedProbeRetried && resumed) {
+                    // A transient read failure after a known state gets one
+                    // silent retry; a first-time failure (e.g. root denied)
+                    // does not, to avoid repeated root prompts.
+                    lsposedProbeRetried = true;
+                    reportHandler.removeCallbacks(lsposedProbeRetry);
+                    reportHandler.postDelayed(lsposedProbeRetry, 800L);
                 }
                 // A null result keeps the last known values. The next
                 // foreground entry or the refresh button retries.
@@ -559,45 +584,57 @@ public class MainActivity extends Activity {
 
     private void updateModeStatus() {
         if (modeStatus == null) return;
-        boolean active = freshActive();
-        boolean failed = freshFailed();
+        StatusModel.State state = statusState();
         String note = bottomConfigNote();
-        if (active) {
-            if (lsposedProbeFailed) {
-                modeStatus.setText("LSPosed · 已激活（管理器读取失败）");
-            } else {
-                modeStatus.setText(note != null
+        switch (state) {
+            case FRESH_ACTIVE:
+                modeStatus.setText(lsposedProbeFailed
+                        ? "LSPosed · 已激活（管理器读取失败）"
+                        : note != null
                         ? "LSPosed · 已激活（" + note + "）"
                         : "LSPosed · 已激活");
-            }
-        } else if (failed) {
-            if (lsposedProbeFailed) {
-                modeStatus.setText("LSPosed · hook 未生效（管理器读取失败）");
-            } else {
-                modeStatus.setText(note != null
+                break;
+            case FRESH_FAILED:
+                modeStatus.setText(lsposedProbeFailed
+                        ? "LSPosed · hook 未生效（管理器读取失败）"
+                        : note != null
                         ? "LSPosed · hook 未生效（" + note + "）"
                         : "LSPosed · 已注入，hook 未生效，软件更新可能已改版");
-            }
-        } else if (!lsposedInstalled()) {
-            modeStatus.setText("未检测到 LSPosed 管理器");
-        } else if (waitingForHookReport()) {
-            modeStatus.setText("LSPosed · 正在检查…");
-        } else if (lsposedProbeFailed) {
-            modeStatus.setText("LSPosed · 管理器状态读取失败，点刷新重试");
-        } else if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
-            modeStatus.setText("LSPosed · 已在管理器中关闭，点芯片打开");
-        } else if (Boolean.FALSE.equals(lsposedOucScoped)) {
-            modeStatus.setText("LSPosed · 作用域未勾选软件更新");
-        } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
-            if (LsposedState.isActive(this)) {
+                break;
+            case NOT_INSTALLED:
+                modeStatus.setText("未检测到 LSPosed 管理器");
+                break;
+            case CHECKING_HOOK:
+                modeStatus.setText(lsposedProbeDone
+                        ? "LSPosed · 正在检查软件更新进程…"
+                        : "LSPosed · 正在检查…");
+                break;
+            case CHECKING_MANAGER:
+                modeStatus.setText(hookReportRequestedAt != 0
+                        ? "LSPosed · 本次未收到 hook 报告，正在读取管理器…"
+                        : "LSPosed · 正在检查…");
+                break;
+            case MANAGER_FAILED:
+                modeStatus.setText("LSPosed · 管理器状态读取失败，点刷新重试");
+                break;
+            case MANAGER_OFF:
+                modeStatus.setText("LSPosed · 已在管理器中关闭，点芯片打开");
+                break;
+            case SCOPE_OFF:
+                modeStatus.setText("LSPosed · 作用域未勾选软件更新");
+                break;
+            case ENABLED_HISTORICAL_ACTIVE:
                 modeStatus.setText("LSPosed · 已启用，当前进程未上报");
-            } else if (LsposedState.hookFailed(this)) {
+                break;
+            case ENABLED_HISTORICAL_FAILED:
                 modeStatus.setText("LSPosed · 已启用，上次 hook 未生效");
-            } else {
+                break;
+            case ENABLED:
                 modeStatus.setText("LSPosed · 已启用，重启软件更新后生效");
-            }
-        } else {
-            modeStatus.setText("LSPosed · 未能读取管理器开关");
+                break;
+            default:
+                modeStatus.setText("LSPosed · 未能读取管理器开关");
+                break;
         }
     }
 
@@ -679,16 +716,28 @@ public class MainActivity extends Activity {
         }
     }
 
+    private StatusModel.State statusState() {
+        return StatusModel.compute(
+                lsposedInstalled(),
+                hookReportFresh && !LsposedState.processGone,
+                LsposedState.active,
+                hookReportPending,
+                lsposedProbeDone,
+                lsposedProbeFailed,
+                lsposedManagerEnabled,
+                lsposedOucScoped,
+                LsposedState.isActive(this),
+                LsposedState.hookFailed(this));
+    }
+
     private boolean freshActive() {
-        return hookReportFresh && LsposedState.active;
+        return hookReportFresh && LsposedState.active
+                && !LsposedState.processGone;
     }
 
     private boolean freshFailed() {
-        return hookReportFresh && !LsposedState.active;
-    }
-
-    private boolean waitingForHookReport() {
-        return hookReportPending || !lsposedProbeDone;
+        return hookReportFresh && !LsposedState.active
+                && !LsposedState.processGone;
     }
 
     /** Subtitle note when the running hook is still alive but new OUC
@@ -714,60 +763,79 @@ public class MainActivity extends Activity {
     }
 
     private void refreshStatus() {
-        boolean active = freshActive();
-        boolean failed = freshFailed();
+        StatusModel.State state = statusState();
         String note = activeConfigNote();
-        if (active) {
-            // A fresh report from the currently hooked OUC process.
-            modeTitle.setText("LSPosed");
-            modeSubtitle.setText(note != null
-                    ? "已激活（" + note + "，新进程不再生效）"
-                    : "已激活，软件更新已返回最新");
-            modeDot.setBackground(rounded(accent(), 999, 0));
-        } else if (failed) {
-            modeTitle.setText("LSPosed");
-            modeSubtitle.setText(note != null
-                    ? "已注入，hook 未生效（" + note + "）"
-                    : "已注入，hook 未生效");
-            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
-        } else if (!lsposedInstalled()) {
-            modeTitle.setText("未安装 LSPosed");
-            modeSubtitle.setText("需要 LSPosed 管理器");
-            modeDot.setBackground(rounded(mutedDot(), 999, 0));
-        } else if (waitingForHookReport()) {
-            modeTitle.setText("LSPosed");
-            modeSubtitle.setText(lsposedProbeDone
-                    ? "正在检查软件更新进程…"
-                    : "正在检查 LSPosed 状态…");
-            modeDot.setBackground(rounded(mutedDot(), 999, 0));
-        } else if (lsposedProbeFailed) {
-            modeTitle.setText("LSPosed");
-            modeSubtitle.setText("管理器状态读取失败，点刷新重试");
-            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
-        } else if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
-            modeTitle.setText("LSPosed");
-            modeSubtitle.setText("已在管理器中关闭");
-            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
-        } else if (Boolean.FALSE.equals(lsposedOucScoped)) {
-            modeTitle.setText("LSPosed");
-            modeSubtitle.setText(Boolean.TRUE.equals(lsposedManagerEnabled)
-                    ? "已启用，但作用域未勾选软件更新"
-                    : "作用域未勾选软件更新");
-            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
-        } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
-            modeTitle.setText("LSPosed");
-            if (LsposedState.isActive(this)) {
+        switch (state) {
+            case FRESH_ACTIVE:
+                modeTitle.setText("LSPosed");
+                modeSubtitle.setText(note != null
+                        ? "已激活（" + note + "，新进程不再生效）"
+                        : "已激活，软件更新已返回最新");
+                modeDot.setBackground(rounded(accent(), 999, 0));
+                break;
+            case FRESH_FAILED:
+                modeTitle.setText("LSPosed");
+                modeSubtitle.setText(note != null
+                        ? "已注入，hook 未生效（" + note + "）"
+                        : "已注入，hook 未生效");
+                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+                break;
+            case NOT_INSTALLED:
+                modeTitle.setText("未安装 LSPosed");
+                modeSubtitle.setText("需要 LSPosed 管理器");
+                modeDot.setBackground(rounded(mutedDot(), 999, 0));
+                break;
+            case CHECKING_HOOK:
+                modeTitle.setText("LSPosed");
+                modeSubtitle.setText(lsposedProbeDone
+                        ? "正在检查软件更新进程…"
+                        : "正在检查 LSPosed 状态…");
+                modeDot.setBackground(rounded(mutedDot(), 999, 0));
+                break;
+            case CHECKING_MANAGER:
+                modeTitle.setText("LSPosed");
+                modeSubtitle.setText(hookReportRequestedAt != 0
+                        ? "本次未收到软件更新进程报告，正在读取管理器…"
+                        : "正在检查 LSPosed 状态…");
+                modeDot.setBackground(rounded(mutedDot(), 999, 0));
+                break;
+            case MANAGER_FAILED:
+                modeTitle.setText("LSPosed");
+                modeSubtitle.setText("管理器状态读取失败，点刷新重试");
+                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+                break;
+            case MANAGER_OFF:
+                modeTitle.setText("LSPosed");
+                modeSubtitle.setText("已在管理器中关闭");
+                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+                break;
+            case SCOPE_OFF:
+                modeTitle.setText("LSPosed");
+                modeSubtitle.setText(Boolean.TRUE.equals(lsposedManagerEnabled)
+                        ? "已启用，但作用域未勾选软件更新"
+                        : "作用域未勾选软件更新");
+                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+                break;
+            case ENABLED_HISTORICAL_ACTIVE:
+                modeTitle.setText("LSPosed");
                 modeSubtitle.setText("已启用，当前软件更新进程未上报（上次 hook 已生效）");
-            } else if (LsposedState.hookFailed(this)) {
+                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+                break;
+            case ENABLED_HISTORICAL_FAILED:
+                modeTitle.setText("LSPosed");
                 modeSubtitle.setText("已启用，上次 hook 未生效；重启软件更新后重试");
-            } else {
+                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+                break;
+            case ENABLED:
+                modeTitle.setText("LSPosed");
                 modeSubtitle.setText("已启用，重启软件更新后生效");
-            }
-            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
-        } else {
-            modeTitle.setText("LSPosed");
-            modeSubtitle.setText("未能读取管理器开关，点芯片打开管理器");
-            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+                break;
+            default:
+                modeTitle.setText("LSPosed");
+                modeSubtitle.setText("未能读取管理器开关，点芯片打开管理器");
+                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+                break;
         }
         styleLsposedChip();
         updateModeStatus();

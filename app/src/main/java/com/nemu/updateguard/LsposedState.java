@@ -1,8 +1,12 @@
 package com.nemu.updateguard;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.util.Log;
 
 /**
  * LSPosed state for the current boot. The module now reports whether the OUC
@@ -16,13 +20,19 @@ import android.provider.Settings;
  * The boot count prevents a report from an earlier boot from looking current.
  */
 public final class LsposedState {
+    private static final String TAG = "UpdateGuard";
     private static final String PREFS = "lsposed_state";
     private static final String KEY_BOOT = "boot";
     private static final String KEY_HOOK = "hook";
 
     public static volatile boolean active = false;
+    /** True after the reporting OUC process died; cleared by a new report. */
+    public static volatile boolean processGone = false;
     /** elapsedRealtime of the latest verified report in this process. */
     public static volatile long lastReportElapsed = 0L;
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private static volatile int lastReportPid = -1;
+    private static volatile IBinder linkedToken;
     private static volatile Runnable listener;
 
     private LsposedState() {
@@ -40,6 +50,7 @@ public final class LsposedState {
     public static void mark(Context context, boolean hookOk) {
         lastReportElapsed = SystemClock.elapsedRealtime();
         active = hookOk;
+        processGone = false;
         try {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit()
@@ -48,6 +59,48 @@ public final class LsposedState {
                     .apply();
         } catch (Throwable ignored) {
         }
+        Runnable callback = listener;
+        if (callback != null) {
+            try {
+                callback.run();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /**
+     * Links a report to the OUC process that sent it. When that process dies,
+     * the last report becomes stale without any polling.
+     */
+    static void linkOucProcess(IBinder token, int pid) {
+        if (token == null || pid <= 0) return;
+        lastReportPid = pid;
+        linkedToken = token;
+        try {
+            token.linkToDeath(() -> MAIN.post(() -> {
+                if (lastReportPid == pid) {
+                    lastReportPid = -1;
+                    linkedToken = null;
+                    markProcessGone();
+                }
+            }), 0);
+        } catch (Throwable t) {
+            // The process may already be gone.
+            MAIN.post(() -> {
+                if (lastReportPid == pid) {
+                    lastReportPid = -1;
+                    linkedToken = null;
+                    markProcessGone();
+                }
+            });
+        }
+    }
+
+    private static void markProcessGone() {
+        Log.i(TAG, "OUC reporting process gone");
+        active = false;
+        lastReportElapsed = 0L;
+        processGone = true;
         Runnable callback = listener;
         if (callback != null) {
             try {

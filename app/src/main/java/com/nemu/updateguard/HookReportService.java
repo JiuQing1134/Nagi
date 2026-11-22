@@ -36,8 +36,10 @@ public class HookReportService extends Service {
             return true;
         }
         Log.i(TAG, "hook report hookOk=" + (msg.arg1 != 0)
-                + " from uid=" + msg.sendingUid);
+                + " from uid=" + msg.sendingUid + " pid=" + msg.arg2);
+        IBinder token = msg.getData().getBinder("token");
         LsposedState.mark(this, msg.arg1 != 0);
+        LsposedState.linkOucProcess(token, msg.arg2);
         return true;
     }
 

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <queries>
         <package android:name="org.lsposed.manager" />
@@ -24,9 +25,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Exported for OUC; messages are accepted only from OUC's UID. -->
         <service
             android:name=".HookReportService"
-            android:exported="true" />
+            android:exported="true"
+            tools:ignore="ExportedService" />
 
         <meta-data
             android:name="xposedmodule"
