@@ -28,7 +28,6 @@ public class UpdateAccessibilityService extends AccessibilityService {
     private static WeakReference<UpdateAccessibilityService> current =
             new WeakReference<>(null);
     private long lastShownAt = 0L;
-    private long dismissedUntil = 0L;
     private View overlay;
     private WindowManager windowManager;
 
@@ -52,25 +51,20 @@ public class UpdateAccessibilityService extends AccessibilityService {
         if (event == null || event.getPackageName() == null) return;
         String eventPackage = event.getPackageName().toString();
         if (!OUC.equals(eventPackage)) {
-            // Ignore our own overlay window events (otherwise the overlay
-            // dismisses itself right after being added). Only a real window
-            // change to another app removes a stale overlay.
+            // Only the event's package name is used here; never read another
+            // app's window content. Ignore our own overlay window events
+            // (otherwise the overlay dismisses itself right after being
+            // added). A window change to any other app removes a stale
+            // overlay instead of letting it cover the launcher.
             if (!getPackageName().equals(eventPackage) &&
                     overlay != null &&
                     event.getEventType() ==
                         AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-                AccessibilityNodeInfo active = getRootInActiveWindow();
-                CharSequence activePackage = active == null
-                        ? null : active.getPackageName();
-                if (activePackage != null &&
-                        !OUC.equals(activePackage.toString())) {
-                    dismissOverlay(false);
-                }
+                dismissOverlay();
             }
             return;
         }
         long now = System.currentTimeMillis();
-        if (now < dismissedUntil) return;
         if (now - lastShownAt < 4000) return;
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return;
@@ -143,7 +137,9 @@ public class UpdateAccessibilityService extends AccessibilityService {
         card.addView(title);
 
         TextView body = new TextView(this);
-        body.setText("凪已把这次检查结果处理为“已是最新”。\n不会下载、安装或修改系统版本。");
+        body.setText("凪已把这次检查结果处理为“已是最新”。\n"
+                + "不会下载、安装或修改系统版本。\n"
+                + "点“返回桌面”会离开更新页。");
         body.setTextSize(14);
         body.setTextColor(bodyColor);
         body.setGravity(Gravity.CENTER);
@@ -155,7 +151,7 @@ public class UpdateAccessibilityService extends AccessibilityService {
         card.addView(body, bodyLp);
 
         Button close = new Button(this);
-        close.setText("知道了");
+        close.setText("返回桌面");
         close.setAllCaps(false);
         close.setTextSize(15);
         close.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
@@ -168,7 +164,13 @@ public class UpdateAccessibilityService extends AccessibilityService {
         close.setMinHeight(0);
         close.setMinWidth(0);
         close.setStateListAnimator(null);
-        close.setOnClickListener(v -> dismissOverlay(true));
+        close.setOnClickListener(v -> {
+            dismissOverlay();
+            // Perform HOME through the accessibility API instead of starting
+            // an activity from a background service. This also guarantees the
+            // real update page is not revealed when the overlay closes.
+            performGlobalAction(GLOBAL_ACTION_HOME);
+        });
         LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
         closeLp.topMargin = dp(20);
@@ -196,7 +198,7 @@ public class UpdateAccessibilityService extends AccessibilityService {
         }
     }
 
-    private void dismissOverlay(boolean closeUpdatePage) {
+    private void dismissOverlay() {
         if (overlay != null && windowManager != null) {
             try {
                 windowManager.removeView(overlay);
@@ -204,10 +206,6 @@ public class UpdateAccessibilityService extends AccessibilityService {
             }
             overlay = null;
         }
-        // Stay closed for this OUC page even if the page still contains
-        // update text. Do not send a global BACK: that would jump away from
-        // the current screen.
-        dismissedUntil = System.currentTimeMillis() + 60000L;
     }
 
     private int dp(float value) {
@@ -229,12 +227,12 @@ public class UpdateAccessibilityService extends AccessibilityService {
 
     @Override
     public void onInterrupt() {
-        dismissOverlay(false);
+        dismissOverlay();
     }
 
     @Override
     public void onDestroy() {
-        dismissOverlay(false);
+        dismissOverlay();
         if (current.get() == this) current = new WeakReference<>(null);
         super.onDestroy();
     }

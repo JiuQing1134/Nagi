@@ -4,22 +4,22 @@ import android.content.Context;
 import android.provider.Settings;
 
 /**
- * Activation state for the LSPosed module. The module sends a broadcast when it
- * is actually injected into a process. The receiver records the current boot
- * count, so the UI can tell whether the activation belongs to this boot.
+ * LSPosed state for the current boot. The module now reports whether the OUC
+ * result hook actually took effect, not just whether LSPosed injected some
+ * code into some process:
  *
- * A broadcast is used instead of only a static field because LSPosed may load
- * the module classes in a separate class loader; a static flag set there is not
- * guaranteed to be the same class object the app reads.
+ *   hook == 1  the obfuscated result.d() method was found and hooked
+ *   hook == 0  OUC was injected, but the hook target was not found
+ *   missing    no report yet this boot
+ *
+ * The boot count prevents a report from an earlier boot from looking current.
  */
 public final class LsposedState {
-    public static final String ACTION =
-            "com.nemu.windstop.action.LSPOSED_ACTIVE";
     private static final String PREFS = "lsposed_state";
     private static final String KEY_BOOT = "boot";
+    private static final String KEY_HOOK = "hook";
 
     public static volatile boolean active = false;
-    public static volatile long lastSeen = 0L;
     private static volatile Runnable listener;
 
     private LsposedState() {
@@ -33,14 +33,14 @@ public final class LsposedState {
         if (listener == value) listener = null;
     }
 
-    public static void mark(Context context) {
-        active = true;
-        lastSeen = System.currentTimeMillis();
+    /** Records a verified OUC hook result for the current boot. */
+    public static void mark(Context context, boolean hookOk) {
+        active = hookOk;
         try {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit()
                     .putInt(KEY_BOOT, bootCount(context))
-                    .putLong("time", lastSeen)
+                    .putInt(KEY_HOOK, hookOk ? 1 : 0)
                     .apply();
         } catch (Throwable ignored) {
         }
@@ -55,22 +55,34 @@ public final class LsposedState {
 
     public static void clear(Context context) {
         active = false;
-        lastSeen = 0L;
         try {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().remove(KEY_BOOT).apply();
+                    .edit().remove(KEY_BOOT).remove(KEY_HOOK).apply();
         } catch (Throwable ignored) {
         }
     }
 
+    /** True only when this boot's OUC result hook was actually installed. */
     public static boolean isActive(Context context) {
         if (active) return true;
+        return savedHook(context) == 1;
+    }
+
+    /** True when OUC was injected this boot but the hook target was missing. */
+    public static boolean hookFailed(Context context) {
+        return !active && savedHook(context) == 0;
+    }
+
+    private static int savedHook(Context context) {
         try {
-            int saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .getInt(KEY_BOOT, -1);
-            return saved >= 0 && saved == bootCount(context);
+            if (context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getInt(KEY_BOOT, -1) != bootCount(context)) {
+                return -1;
+            }
+            return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getInt(KEY_HOOK, -1);
         } catch (Throwable t) {
-            return false;
+            return -1;
         }
     }
 

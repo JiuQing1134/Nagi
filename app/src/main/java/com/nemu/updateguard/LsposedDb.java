@@ -10,11 +10,11 @@ import java.io.InputStream;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Read-only view of LSPosed's module state. The activation broadcast tells us
- * that the module was injected; this database probe additionally tells us when
- * the user turns the module OFF in the manager, which cannot be inferred from
- * past injection alone. Root is required only for this probe; without root the
- * app falls back to the broadcast marker.
+ * Read-only view of LSPosed's module state. The hook report tells us about the
+ * current boot; this database probe additionally tells us when the user turns
+ * the module OFF in the manager, which cannot be inferred from a past report
+ * alone. Root is required only for this probe; without root the app falls back
+ * to the persisted hook report.
  */
 final class LsposedDb {
     private static final String SRC_DB =

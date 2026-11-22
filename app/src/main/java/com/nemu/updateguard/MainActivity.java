@@ -2,12 +2,11 @@ package com.nemu.updateguard;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.NotificationManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
@@ -55,10 +54,10 @@ public class MainActivity extends Activity {
     private static final String PREFS = "update_sleep";
     private static final String LSPOSED_PACKAGE = "org.lsposed.manager";
     private static final int REQ_SHIZUKU = 8;
+    private static final long LSPOSED_PROBE_INTERVAL_MS = 10000L;
 
     private boolean dark;
     private boolean switchUpdating;
-    private boolean autoEnableTried;
     private boolean rootCheckInFlight;
     private boolean rootCheckAttempted;
     private long lastRootCheckAt;
@@ -102,6 +101,7 @@ public class MainActivity extends Activity {
                 & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         selectedMode = prefs.getString("mode", "");
+        removeLegacyIconChannels();
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -122,23 +122,7 @@ public class MainActivity extends Activity {
         applySystemBars();
         applyHighRefreshRate();
         Shizuku.addRequestPermissionResultListener(shizukuPermissionListener);
-        try {
-            IntentFilter lsposedFilter = new IntentFilter(LsposedState.ACTION);
-            if (Build.VERSION.SDK_INT >= 33) {
-                registerReceiver(lsposedReceiver, lsposedFilter,
-                        Context.RECEIVER_EXPORTED);
-            } else {
-                registerReceiver(lsposedReceiver, lsposedFilter);
-            }
-        } catch (Throwable ignored) {
-        }
         refreshStatus();
-        // The self-injection broadcast can arrive a few milliseconds after the
-        // first refreshStatus. Re-read once so the chip does not stay on
-        // "not activated" until a manual refresh.
-        uiHandler.postDelayed(() -> {
-            if (modeTitle != null) refreshStatus();
-        }, 800L);
     }
 
     @Override
@@ -160,12 +144,19 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         uiHandler.removeCallbacksAndMessages(null);
-        try {
-            unregisterReceiver(lsposedReceiver);
-        } catch (Throwable ignored) {
-        }
         Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener);
         super.onDestroy();
+    }
+
+    /** Removes channels left behind by the removed hide-icon feature. */
+    private void removeLegacyIconChannels() {
+        try {
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm == null) return;
+            nm.deleteNotificationChannel("hidden_icon");
+            nm.deleteNotificationChannel("hidden_icon_v2");
+        } catch (Throwable ignored) {
+        }
     }
 
     private LinearLayout hero() {
@@ -348,14 +339,14 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Reads LSPosed's own module switch. The activation broadcast only tells us
-     * "injected at least once"; this probe notices a later OFF toggle in the
-     * manager. Root is used read-only; failure keeps the broadcast fallback.
+     * Reads LSPosed's own module switch. The hook report only covers the
+     * current boot; this probe notices a later OFF toggle in the manager.
+     * Root is used read-only; failure keeps the hook report as the fallback.
      */
     private void probeLsposed(boolean force) {
         if (!rootOk || lsposedProbeRunning) return;
         long now = System.currentTimeMillis();
-        if (!force && now - lsposedProbeAt < 1500L) return;
+        if (!force && now - lsposedProbeAt < LSPOSED_PROBE_INTERVAL_MS) return;
         lsposedProbeRunning = true;
         new Thread(() -> {
             Boolean enabled = LsposedDb.queryEnabled(this);
@@ -371,19 +362,9 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    /** Real-time activation broadcast from the injected module. */
+    /** Real-time hook report from the injected module. */
     private final Runnable lsposedActivated = () -> {
         if (modeTitle != null) refreshStatus();
-    };
-
-    private final BroadcastReceiver lsposedReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (intent != null && LsposedState.ACTION.equals(intent.getAction())) {
-                LsposedState.mark(context);
-                refreshStatus();
-            }
-        }
     };
 
     private void launchLsposed() {
@@ -487,7 +468,7 @@ public class MainActivity extends Activity {
         LinearLayout footer = new LinearLayout(this);
         footer.setOrientation(LinearLayout.HORIZONTAL);
         footer.setGravity(Gravity.CENTER_VERTICAL);
-        String versionName = "1.3.3";
+        String versionName = "1.3.4";
         try {
             String installed = getPackageManager()
                     .getPackageInfo(getPackageName(), 0).versionName;
@@ -597,10 +578,12 @@ public class MainActivity extends Activity {
         if ("lsposed".equals(selectedMode) && !a11y) {
             if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
                 modeStatus.setText("LSPosed · 已在管理器中关闭，点芯片打开");
+            } else if (LsposedState.hookFailed(this)) {
+                modeStatus.setText("LSPosed · 已注入，hook 未生效，OUC 可能已更新");
             } else if (LsposedState.isActive(this)) {
                 modeStatus.setText("LSPosed · 已激活，更新检查返回已最新");
             } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
-                modeStatus.setText("LSPosed · 已启用，重启后生效");
+                modeStatus.setText("LSPosed · 已启用，打开软件更新后生效");
             } else {
                 modeStatus.setText("LSPosed · 状态未知，点芯片打开管理器");
             }
@@ -751,11 +734,14 @@ public class MainActivity extends Activity {
             if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
                 modeSubtitle.setText("已在管理器中关闭");
                 modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+            } else if (LsposedState.hookFailed(this)) {
+                modeSubtitle.setText("已注入，hook 未生效");
+                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
             } else if (LsposedState.isActive(this)) {
                 modeSubtitle.setText("已激活，更新检查返回已最新");
                 modeDot.setBackground(rounded(accent(), 999, 0));
             } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
-                modeSubtitle.setText("已启用，重启后生效");
+                modeSubtitle.setText("已启用，打开软件更新后生效");
                 modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
             } else {
                 modeSubtitle.setText("状态未知，点芯片打开管理器");
@@ -791,7 +777,6 @@ public class MainActivity extends Activity {
     }
 
     private void enableIndependentMode() {
-        autoEnableTried = true;
         prefs.edit().putBoolean("user_disabled", false).apply();
         if (shizukuGranted()) {
             runShizukuEnable();
@@ -825,7 +810,6 @@ public class MainActivity extends Activity {
     }
 
     private void disableIndependentMode() {
-        autoEnableTried = true;
         prefs.edit().putBoolean("user_disabled", true).apply();
         boolean enabled = isAccessibilityEnabled();
         if (enabled && !UpdateAccessibilityService.disableSelfNow()) {
@@ -840,17 +824,6 @@ public class MainActivity extends Activity {
             feedback(enabled ? "独立模式已关闭" : "已取消开启");
         }
         refreshStatus();
-    }
-
-    private void bringHomeToFront() {
-        try {
-            Intent home = new Intent(Intent.ACTION_MAIN)
-                    .addCategory(Intent.CATEGORY_HOME)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                            | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
-            startActivity(home);
-        } catch (Throwable ignored) {
-        }
     }
 
     private String execute(String command, String[] prefix) {
@@ -884,6 +857,13 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * Shizuku 13.1.5 has no public shell-exec API, so this calls the server's
+     * newProcess transaction directly. That interface is version-coupled:
+     * tested with Shizuku 13.7.0 (thedjchi). If a future Shizuku changes the
+     * transaction layout, the chip reports the failure and ADB / Root remain
+     * usable.
+     */
     private String shizukuExec(String command) {
         try {
             IShizukuService service = IShizukuService.Stub.asInterface(Shizuku.getBinder());

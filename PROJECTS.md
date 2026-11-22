@@ -31,16 +31,16 @@
 - **GitHub**：https://github.com/JiuQing1134/Nagi
 - **applicationId**：`com.nemu.windstop`
 - **源码命名空间**：`com.nemu.updateguard`
-- **版本**：`1.3.3` / `versionCode 9`
-- **APK**：`D:\win_root\nemu-update-guard\app\build\outputs\apk\debug\app-debug.apk`
-  - 2,653,436 字节
-  - SHA-256：`d400b5165cf31760c613e69c555bb2719246e2c0c448e1b1ac3b2ef87ce7c7bb`
+- **版本**：`1.3.4` / `versionCode 10`
+- **APK**：`D:\win_root\nemu-update-guard\app\build\outputs\apk\release\app-release.apk`
+  - 2,219,978 字节
+  - SHA-256：`e4bb053f341748adedc3b6f28258478eccda68241d437c00d09d5ee90296c859`
 - **文档**：
   - `D:\win_root\nemu\docs\14-update-guard.md`
   - `D:\win_root\nemu\docs\15-task-status-2026-11-22.md`
 - **用途**：让 OUC 更新检查显示“已是最新”，不冻结/不卸载 OUC，不修改系统版本号。
-- **LSPosed**：作用域 `系统框架 (system)` + `软件更新 (com.hihonor.ouc)`；模块开关关闭/已启用待重启/已激活三态会实时显示。
-- **图标**：白底黑色“三道风线 + 竖条”的风停图形。
+- **LSPosed**：作用域 `系统框架 (system)` + `软件更新 (com.hihonor.ouc)`；模块开关关闭/已启用待注入/hook 未生效/已激活四态会实时显示。
+- **图标**：白底翠绿三角回环，圆点位于正中心。
 
 ## 3. 共用信息
 
@@ -48,6 +48,6 @@
   仅参考 suspend 机制与公开文档，不依赖、不调用其 API/Intent/数据。
 - **当前设备状态（2026-11-22）**：
   - Nemu：0 个冻结目标，OUC `suspended=false`，SafetyService 未运行。
-  - 凪：LSPosed 已启用并激活；独立模式关闭；无障碍已关闭；桌面图标已恢复。
+  - 凪：LSPosed 已启用并激活；独立模式关闭；无障碍已关闭；桌面图标固定显示。
   - 两个 App 均请求 120 Hz（`mActiveModeId=3 / renderFrameRate 120.00001`）。
 - **注意**：覆盖安装凪的新 APK 后，LSPosed 可能自动把模块开关置为关闭；到 LSPosed 中重新打开并重启即可。App 会立即显示“已在管理器中关闭”。

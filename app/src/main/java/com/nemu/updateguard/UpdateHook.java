@@ -1,12 +1,18 @@
 package com.nemu.updateguard;
 
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
+import android.os.IBinder;
+import android.os.Message;
+import android.os.Messenger;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
 
 import java.io.File;
 import java.io.FileDescriptor;
-import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -26,9 +32,12 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam;
  *
  * Shutdown hook (system_server): before ShutdownThread.run performs the real
  * reboot, signal the root FIFO daemon installed by the Nemu module. The
- * daemon runs /data/adb/nemu/restore_frozen.sh, which the app regenerates
+ * daemon runs /data/adb/nemu/restore_frozen.sh, which the Nemu app regenerates
  * after every freeze/restore. This covers power-key, system UI and app-issued
- * shutdowns/reboots.
+ * shutdowns/reboots. The hook is kept because Nemu's initrc path is not
+ * available on every install; it deliberately does NOT report LSPosed as
+ * active, because injecting into system_server says nothing about whether the
+ * OUC hook actually took effect.
  */
 public class UpdateHook implements IXposedHookLoadPackage {
     private static final String OUC = "com.hihonor.ouc";
@@ -41,9 +50,7 @@ public class UpdateHook implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(LoadPackageParam lpparam) {
-        if ("com.nemu.windstop".equals(lpparam.packageName)) {
-            markActiveInSelf(lpparam);
-        } else if (OUC.equals(lpparam.packageName)) {
+        if (OUC.equals(lpparam.packageName)) {
             hookOuc(lpparam);
         } else if ("android".equals(lpparam.packageName)) {
             hookShutdown(lpparam);
@@ -51,51 +58,13 @@ public class UpdateHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * LSPosed injects this module into the app's own process when it is active.
-     * Do not rely on a static field across class loaders: hook Application and
-     * broadcast, so the app's receiver marks the current boot.
+     * Applies the result hook and then reports the real outcome. Only OUC's
+     * main process reports, so a secondary process that fails to resolve the
+     * obfuscated class cannot overwrite a successful verdict from the process
+     * that renders the update page.
      */
-    private void markActiveInSelf(LoadPackageParam lpparam) {
-        try {
-            XposedHelpers.findAndHookMethod(
-                    android.app.Application.class, "onCreate",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            broadcastActive((android.content.Context) param.thisObject);
-                        }
-                    });
-            XposedBridge.log("UpdateGuard: LSPosed injected into app process");
-        } catch (Throwable t) {
-            XposedBridge.log("UpdateGuard: self activation hook failed: " + t);
-        }
-    }
-
-    private static void broadcastActive(android.content.Context context) {
-        try {
-            android.content.Intent intent = new android.content.Intent(
-                    "com.nemu.windstop.action.LSPOSED_ACTIVE");
-            intent.setPackage("com.nemu.windstop");
-            intent.addFlags(android.content.Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
-            context.sendBroadcast(intent);
-            XposedBridge.log("UpdateGuard: activation broadcast sent");
-        } catch (Throwable t) {
-            XposedBridge.log("UpdateGuard: activation broadcast failed: " + t);
-        }
-    }
-
     private void hookOuc(LoadPackageParam lpparam) {
-        try {
-            XposedHelpers.findAndHookMethod(
-                    android.app.Application.class, "onCreate",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            broadcastActive((android.content.Context) param.thisObject);
-                        }
-                    });
-        } catch (Throwable ignored) {
-        }
+        boolean hooked = false;
         try {
             Class<?> result = XposedHelpers.findClass(
                     RESULT_CLASS, lpparam.classLoader);
@@ -106,9 +75,70 @@ public class UpdateHook implements IXposedHookLoadPackage {
                             return Boolean.FALSE;
                         }
                     });
+            hooked = true;
             XposedBridge.log("UpdateGuard: OUC check result.d() -> false");
         } catch (Throwable t) {
             XposedBridge.log("UpdateGuard: OUC hook failed: " + t);
+        }
+        final boolean hookOk = hooked;
+        final boolean mainProcess = lpparam.processName == null
+                || OUC.equals(lpparam.processName);
+        try {
+            XposedHelpers.findAndHookMethod(
+                    android.app.Application.class, "onCreate",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (mainProcess) {
+                                reportActive(
+                                        (Context) param.thisObject, hookOk);
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            XposedBridge.log("UpdateGuard: activation hook failed: " + t);
+        }
+    }
+
+    /**
+     * Reports the hook result through a bound Messenger. The app verifies
+     * Message.sendingUid against OUC's UID, so a normal app cannot fake the
+     * "activated" state with a broadcast.
+     */
+    private static void reportActive(final Context context, final boolean hookOk) {
+        final Intent intent = new Intent();
+        intent.setComponent(new ComponentName("com.nemu.windstop",
+                "com.nemu.updateguard.HookReportService"));
+        try {
+            boolean bound = context.bindService(intent,
+                    new ServiceConnection() {
+                        @Override
+                        public void onServiceConnected(
+                                ComponentName name, IBinder binder) {
+                            try {
+                                Message message = Message.obtain(
+                                        null, HookReportService.MSG_REPORT);
+                                message.arg1 = hookOk ? 1 : 0;
+                                new Messenger(binder).send(message);
+                            } catch (Throwable t) {
+                                XposedBridge.log(
+                                        "UpdateGuard: hook report failed: " + t);
+                            } finally {
+                                try {
+                                    context.unbindService(this);
+                                } catch (Throwable ignored) {
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onServiceDisconnected(ComponentName name) {
+                        }
+                    }, Context.BIND_AUTO_CREATE);
+            XposedBridge.log("UpdateGuard: hook report bind=" + bound
+                    + " hookOk=" + hookOk);
+        } catch (Throwable t) {
+            XposedBridge.log("UpdateGuard: hook report bind failed: " + t);
         }
     }
 
@@ -128,24 +158,13 @@ public class UpdateHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log("UpdateGuard: shutdown hook failed: " + t);
         }
-        try {
-            Class<?> activityThread = XposedHelpers.findClass(
-                    "android.app.ActivityThread", lpparam.classLoader);
-            Object thread = XposedHelpers.callStaticMethod(
-                    activityThread, "currentActivityThread");
-            android.content.Context context =
-                    (android.content.Context) XposedHelpers.callMethod(
-                            thread, "getSystemContext");
-            broadcastActive(context);
-        } catch (Throwable t) {
-            XposedBridge.log("UpdateGuard: system activation broadcast failed: " + t);
-        }
     }
 
     private void restoreBeforeShutdown() {
         try {
-            // Nothing is frozen: the app writes an empty restore script. Do not
-            // touch the FIFO, otherwise a missing reader can block shutdown.
+            // Nothing is frozen: the Nemu app writes an empty restore script.
+            // Do not touch the FIFO, otherwise a missing reader can block
+            // shutdown.
             if (!RESTORE.exists() || RESTORE.length() == 0L) {
                 XposedBridge.log("UpdateGuard: no restore script; skip shutdown hook");
                 return;

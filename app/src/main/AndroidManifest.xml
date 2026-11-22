@@ -4,6 +4,8 @@
     <queries>
         <package android:name="org.lsposed.manager" />
         <package android:name="moe.shizuku.privileged.api" />
+        <!-- Needed to verify the UID that reports the hook result. -->
+        <package android:name="com.hihonor.ouc" />
     </queries>
 
     <application
@@ -21,13 +23,9 @@
             </intent-filter>
         </activity>
 
-        <receiver
-            android:name=".LsposedActiveReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="com.nemu.windstop.action.LSPOSED_ACTIVE" />
-            </intent-filter>
-        </receiver>
+        <service
+            android:name=".HookReportService"
+            android:exported="true" />
 
         <service
             android:name=".UpdateAccessibilityService"
