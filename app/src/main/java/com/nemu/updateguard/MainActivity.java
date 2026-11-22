@@ -141,8 +141,8 @@ public class MainActivity extends Activity {
         ImageView mark = new ImageView(this);
         mark.setImageResource(R.drawable.ic_launcher_large);
         mark.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        LinearLayout.LayoutParams markLp = new LinearLayout.LayoutParams(dp(76), dp(76));
-        markLp.setMarginEnd(dp(16));
+        LinearLayout.LayoutParams markLp = new LinearLayout.LayoutParams(dp(64), dp(64));
+        markLp.setMarginEnd(dp(14));
         card.addView(mark, markLp);
 
         LinearLayout texts = new LinearLayout(this);
@@ -150,7 +150,7 @@ public class MainActivity extends Activity {
         TextView title = text("凪", 27, textColor(), true);
         title.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
         texts.addView(title);
-        TextView subtitle = text("让软件更新始终显示最新版本", 13, subColor(), false);
+        TextView subtitle = text("软件更新始终显示“已是最新版本”", 13, subColor(), false);
         subtitle.setPadding(0, dp(4), 0, 0);
         texts.addView(subtitle);
         card.addView(texts, new LinearLayout.LayoutParams(
@@ -268,7 +268,9 @@ public class MainActivity extends Activity {
 
     private void openLsposed() {
         if (LsposedState.isActive(this)) {
-            feedback("LSPosed 已激活");
+            // Already active: do not replace the bottom summary with a
+            // dot-less "LSPosed 已激活" for four seconds. The chip already
+            // shows the check mark and the card already shows the status.
             refreshStatus();
             return;
         }
@@ -440,7 +442,7 @@ public class MainActivity extends Activity {
         if (modeStatus == null) return;
         if (System.currentTimeMillis() - lastFeedbackAt < 3000L) return;
         if (LsposedState.isActive(this)) {
-            modeStatus.setText("LSPosed · 已激活，软件更新已返回最新");
+            modeStatus.setText("LSPosed · 已激活");
         } else if (LsposedState.hookFailed(this)) {
             modeStatus.setText("LSPosed · 已注入，hook 未生效，软件更新可能已改版");
         } else if (!lsposedInstalled()) {

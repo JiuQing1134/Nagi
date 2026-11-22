@@ -31,10 +31,10 @@
 - **GitHub**：https://github.com/JiuQing1134/Nagi
 - **applicationId**：`com.nemu.windstop`
 - **源码命名空间**：`com.nemu.updateguard`
-- **版本**：`1.3.8` / `versionCode 16`
+- **版本**：`1.3.8` / `versionCode 21`
 - **APK**：`D:\win_root\nemu-update-guard\app\build\outputs\apk\release\app-release.apk`
-  - 2,146,774 字节
-  - SHA-256：`23d8bbf8ad607e6dad352b59e1b6d59a22208427b1884e13a074302f8b3785d0`
+  - 2,146,706 字节
+  - SHA-256：`ac2e89bcf0172a589a9cdef1111bd092cc984e619825cedcdc3672039c485f20`
 - **开源协议**：CC BY-NC 4.0（署名—非商业性使用 4.0 国际），Copyright (c) 2026 JiuQing，见 [LICENSE](LICENSE)。
 - **文档**：
   - `D:\win_root\nemu\docs\14-update-guard.md`

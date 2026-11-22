@@ -19,7 +19,7 @@ android {
         applicationId = "com.nemu.windstop"
         minSdk = 30
         targetSdk = 36
-        versionCode = 16
+        versionCode = 21
         versionName = "1.3.8"
     }
 
