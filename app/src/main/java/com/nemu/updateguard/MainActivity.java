@@ -10,7 +10,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.content.pm.ResolveInfo;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Typeface;
@@ -28,7 +27,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
-import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -56,13 +54,11 @@ import rikka.shizuku.Shizuku;
 public class MainActivity extends Activity {
     private static final String PREFS = "update_sleep";
     private static final String LSPOSED_PACKAGE = "org.lsposed.manager";
-    private static final int REQ_NOTIFICATIONS = 7;
     private static final int REQ_SHIZUKU = 8;
 
     private boolean dark;
     private boolean switchUpdating;
     private boolean autoEnableTried;
-    private boolean pendingHideAfterPermission;
     private boolean rootCheckInFlight;
     private boolean rootCheckAttempted;
     private long lastRootCheckAt;
@@ -83,7 +79,6 @@ public class MainActivity extends Activity {
     private TextView shizukuMode;
     private TextView adbMode;
     private Switch independentSwitch;
-    private Button iconButton;
     private volatile Boolean lsposedManagerEnabled = null;
     private volatile long lsposedProbeAt = 0L;
     private volatile boolean lsposedProbeRunning = false;
@@ -121,7 +116,6 @@ public class MainActivity extends Activity {
 
         root.addView(hero());
         root.addView(modeCard());
-        root.addView(hideButton());
         root.addView(footer());
 
         setContentView(scroll);
@@ -138,7 +132,6 @@ public class MainActivity extends Activity {
             }
         } catch (Throwable ignored) {
         }
-        handleIntent(getIntent());
         refreshStatus();
         // The self-injection broadcast can arrive a few milliseconds after the
         // first refreshStatus. Re-read once so the chip does not stay on
@@ -165,13 +158,6 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        handleIntent(intent);
-    }
-
-    @Override
     protected void onDestroy() {
         uiHandler.removeCallbacksAndMessages(null);
         try {
@@ -180,14 +166,6 @@ public class MainActivity extends Activity {
         }
         Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener);
         super.onDestroy();
-    }
-
-    private void handleIntent(Intent intent) {
-        if (intent != null
-                && HiddenIconNotifier.ACTION_SHOW_ICON.equals(intent.getAction())
-                && !HiddenIconNotifier.isLauncherIconEnabled(this)) {
-            showLauncherIcon();
-        }
     }
 
     private LinearLayout hero() {
@@ -308,31 +286,6 @@ public class MainActivity extends Activity {
         });
         switchRow.addView(independentSwitch);
         card.addView(switchRow);
-        return card;
-    }
-
-    private LinearLayout hideButton() {
-        LinearLayout card = card();
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-
-        LinearLayout texts = new LinearLayout(this);
-        texts.setOrientation(LinearLayout.VERTICAL);
-        TextView title = text("桌面图标", 15, textColor(), true);
-        texts.addView(title);
-        TextView subtitle = text("隐藏后可从常驻通知打开", 12, subColor(), false);
-        subtitle.setPadding(0, dp(2), 0, 0);
-        texts.addView(subtitle);
-        row.addView(texts, new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-        iconButton = pill("隐藏图标", false, v -> toggleLauncherIcon());
-        LinearLayout.LayoutParams buttonLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, dp(40));
-        buttonLp.setMarginStart(dp(12));
-        row.addView(iconButton, buttonLp);
-        card.addView(row);
         return card;
     }
 
@@ -520,9 +473,7 @@ public class MainActivity extends Activity {
         String merged = mergedAccessibilityServices();
         String cmd = "adb shell settings put secure enabled_accessibility_services "
                 + merged + "\n"
-                + "adb shell settings put secure accessibility_enabled 1\n"
-                + "adb shell pm grant " + getPackageName()
-                + " android.permission.POST_NOTIFICATIONS";
+                + "adb shell settings put secure accessibility_enabled 1";
         ClipboardManager clipboard =
                 (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         if (clipboard != null) {
@@ -555,25 +506,6 @@ public class MainActivity extends Activity {
         });
         footer.addView(refresh);
         return footer;
-    }
-
-    private Button pill(String label, boolean primary, View.OnClickListener listener) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setAllCaps(false);
-        button.setTextSize(14);
-        button.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
-        button.setTextColor(primary ? (dark ? 0xFF06130F : 0xFFFFFFFF) : textColor());
-        button.setBackground(rounded(
-                primary ? accent() : cardBg(),
-                15,
-                primary ? 0 : stroke()));
-        button.setPadding(dp(10), 0, dp(10), 0);
-        button.setMinHeight(0);
-        button.setMinWidth(0);
-        button.setStateListAnimator(null);
-        button.setOnClickListener(listener);
-        return button;
     }
 
     private LinearLayout card() {
@@ -805,7 +737,6 @@ public class MainActivity extends Activity {
 
     private void refreshStatus() {
         boolean a11y = isAccessibilityEnabled();
-        boolean iconEnabled = HiddenIconNotifier.isLauncherIconEnabled(this);
 
         switchUpdating = true;
         independentSwitch.setChecked(a11y);
@@ -837,14 +768,6 @@ public class MainActivity extends Activity {
         }
         styleChips();
         updateModeStatus(a11y);
-        iconButton.setText(iconEnabled ? "隐藏图标" : "显示图标");
-
-        if (!iconEnabled) {
-            if (!HiddenIconNotifier.show(this)) {
-                // Never leave the app without an icon and without a notification.
-                HiddenIconNotifier.setLauncherIconEnabled(this, true);
-            }
-        }
 
         checkRootAsync();
     }
@@ -919,109 +842,6 @@ public class MainActivity extends Activity {
         refreshStatus();
     }
 
-    private void toggleLauncherIcon() {
-        if (HiddenIconNotifier.isLauncherIconEnabled(this)) {
-            if (Build.VERSION.SDK_INT >= 33
-                    && !HiddenIconNotifier.hasNotificationPermission(this)) {
-                pendingHideAfterPermission = true;
-                requestPermissions(new String[]{
-                        "android.permission.POST_NOTIFICATIONS"}, REQ_NOTIFICATIONS);
-                feedback("通知是隐藏后的入口，请允许通知");
-                return;
-            }
-            hideLauncherIcon();
-        } else {
-            showLauncherIcon();
-        }
-    }
-
-    private void hideLauncherIcon() {
-        if (!HiddenIconNotifier.setLauncherIconEnabled(this, false)) {
-            feedback("隐藏失败：系统未接受组件状态");
-            refreshStatus();
-            return;
-        }
-        boolean notified = HiddenIconNotifier.show(this);
-        if (!notified) {
-            HiddenIconNotifier.setLauncherIconEnabled(this, true);
-            feedback("通知不可用，已保留桌面图标");
-            refreshStatus();
-            return;
-        }
-        refreshStatus();
-        refreshLauncher(refreshed -> {
-            feedback(refreshed
-                    ? "图标已隐藏，可从通知打开"
-                    : "图标已隐藏，可从通知打开；桌面未刷新，请稍候");
-            refreshStatus();
-        });
-    }
-
-    private void showLauncherIcon() {
-        if (!HiddenIconNotifier.setLauncherIconEnabled(this, true)) {
-            feedback("显示失败：系统未接受组件状态");
-            refreshStatus();
-            return;
-        }
-        HiddenIconNotifier.cancel(this);
-        refreshStatus();
-        refreshLauncher(refreshed -> {
-            feedback(refreshed ? "图标已显示，桌面已刷新" : "图标已显示");
-            refreshStatus();
-        });
-    }
-
-    private void refreshLauncher(LauncherCallback callback) {
-        final String launcher = homePackage();
-        new Thread(() -> {
-            boolean refreshed = false;
-            if (launcher != null) {
-                try {
-                    if (shizukuGranted()) {
-                        String result = shizukuExec(
-                                "am force-stop " + launcher + " && echo __OK__");
-                        refreshed = result.contains("__OK__");
-                    }
-                } catch (Throwable ignored) {
-                }
-                if (!refreshed) {
-                    try {
-                        String result = execute(
-                                "id >/dev/null 2>&1 && am force-stop " + launcher
-                                        + " && echo __OK__", null);
-                        refreshed = result.contains("__OK__");
-                    } catch (Throwable ignored) {
-                    }
-                }
-            }
-            final boolean done = refreshed;
-            runOnUiThread(() -> {
-                if (callback != null) callback.done(done);
-            });
-        }).start();
-    }
-
-    private interface LauncherCallback {
-        void done(boolean refreshed);
-    }
-
-    private String homePackage() {
-        try {
-            Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
-            ResolveInfo ri = getPackageManager().resolveActivity(
-                    home, PackageManager.MATCH_DEFAULT_ONLY);
-            if (ri == null || ri.activityInfo == null) return null;
-            String pkg = ri.activityInfo.packageName;
-            if (pkg == null || pkg.equals(getPackageName()) ||
-                    "com.android.settings".equals(pkg)) {
-                return null;
-            }
-            return pkg;
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
     private void bringHomeToFront() {
         try {
             Intent home = new Intent(Intent.ACTION_MAIN)
@@ -1031,25 +851,6 @@ public class MainActivity extends Activity {
             startActivity(home);
         } catch (Throwable ignored) {
         }
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions,
-                                           int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode != REQ_NOTIFICATIONS) return;
-        boolean granted = grantResults.length > 0
-                && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-        boolean pending = pendingHideAfterPermission;
-        pendingHideAfterPermission = false;
-        if (pending) {
-            if (granted) {
-                hideLauncherIcon();
-            } else {
-                feedback("未授予通知权限，已取消隐藏");
-            }
-        }
-        refreshStatus();
     }
 
     private String execute(String command, String[] prefix) {
