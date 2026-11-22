@@ -19,8 +19,8 @@ android {
         applicationId = "com.nemu.windstop"
         minSdk = 30
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.3.5"
+        versionCode = 13
+        versionName = "1.3.7"
     }
 
     signingConfigs {

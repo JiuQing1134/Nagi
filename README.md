@@ -4,7 +4,7 @@
 不冻结、不卸载 OUC，不修改系统版本号。
 
 - **applicationId**：`com.nemu.windstop`（源码命名空间 `com.nemu.updateguard`）
-- **版本**：`1.3.5` / `versionCode 11`
+- **版本**：`1.3.7` / `versionCode 13`
 - **图标**：白底翠绿三角回环，圆点位于正中心；名字是 **凪**。
 - **配套项目（Nemu / 眠梦）**：https://github.com/JiuQing1134/Nemu
 - **完整地址与产物**：[`PROJECTS.md`](PROJECTS.md)
@@ -44,3 +44,11 @@ Release APK：`app/build/outputs/apk/release/app-release.apk`。
 依赖：`compileOnly` Xposed API 82（`app/libs/api-82.jar`）。
 LSPosed 入口：`assets/xposed_init` → `com.nemu.updateguard.UpdateHook`。
 详细文档在 Nemu 仓库的 `docs/14-update-guard.md`。
+
+## 开源协议
+
+本项目采用 [Creative Commons Attribution-NonCommercial 4.0 International（CC BY-NC 4.0，署名—非商业性使用 4.0 国际）](LICENSE)，Copyright (c) 2026 JiuQing。
+允许非商业性使用、修改和再分发，**禁止商业使用**；分发时请保留署名。
+App 底部“开源协议”入口展示中英文官方原文（`app/src/main/res/raw/license.txt`）。
+
+> 注意：CC BY-NC 4.0 并非 OSI 认可的软件开源许可证，且明确禁止商业使用。

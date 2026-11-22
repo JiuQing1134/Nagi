@@ -25,6 +25,10 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+
 /**
  * LSPosed-only control panel. The module reports its OUC hook result through
  * HookReportService; this screen displays that state and opens the LSPosed
@@ -56,22 +60,28 @@ public class MainActivity extends Activity {
                 & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
         removeLegacyIconChannels();
 
+        LinearLayout screen = new LinearLayout(this);
+        screen.setOrientation(LinearLayout.VERTICAL);
+        screen.setBackgroundColor(bg());
+        screen.setFitsSystemWindows(true);
+
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(bg());
-        scroll.setFitsSystemWindows(true);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(22);
-        root.setPadding(pad, dp(18), pad, dp(28));
-        root.setFitsSystemWindows(true);
+        root.setPadding(pad, dp(18), pad, dp(12));
         scroll.addView(root);
 
         root.addView(hero());
         root.addView(modeCard());
-        root.addView(footer());
 
-        setContentView(scroll);
+        screen.addView(scroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        screen.addView(bottomBar());
+
+        setContentView(screen);
         applySystemBars();
         applyHighRefreshRate();
         refreshStatus();
@@ -140,7 +150,7 @@ public class MainActivity extends Activity {
         TextView title = text("凪", 27, textColor(), true);
         title.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
         texts.addView(title);
-        TextView subtitle = text("让更新检查保持最新", 13, subColor(), false);
+        TextView subtitle = text("让更新检查始终保持最新版本", 13, subColor(), false);
         subtitle.setPadding(0, dp(4), 0, 0);
         texts.addView(subtitle);
         card.addView(texts, new LinearLayout.LayoutParams(
@@ -175,6 +185,14 @@ public class MainActivity extends Activity {
         titles.addView(modeSubtitle);
         modeRow.addView(titles, new LinearLayout.LayoutParams(
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView refresh = text("刷新", 12, accent(), false);
+        refresh.setPadding(dp(12), dp(6), dp(4), dp(6));
+        refresh.setOnClickListener(v -> {
+            probeLsposed(true);
+            refreshStatus();
+        });
+        modeRow.addView(refresh);
         card.addView(modeRow);
 
         LinearLayout chipRow = chipRow(14);
@@ -292,28 +310,75 @@ public class MainActivity extends Activity {
         }
     }
 
-    private LinearLayout footer() {
-        LinearLayout footer = new LinearLayout(this);
-        footer.setOrientation(LinearLayout.HORIZONTAL);
-        footer.setGravity(Gravity.CENTER_VERTICAL);
-        String versionName = "1.3.5";
+    private LinearLayout bottomBar() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.VERTICAL);
+        bar.setGravity(Gravity.CENTER_HORIZONTAL);
+        bar.setPadding(dp(22), dp(10), dp(22), dp(18));
+        bar.setBackgroundColor(bg());
+
+        TextView version = text(installedVersion(), 10, subColor(), false);
+        version.setGravity(Gravity.CENTER);
+        version.setAlpha(0.6f);
+        bar.addView(version, fullWidth());
+
+        TextView powered = text("Powered by JiuQing", 11, subColor(), false);
+        powered.setGravity(Gravity.CENTER);
+        powered.setAlpha(0.8f);
+        powered.setPadding(0, dp(3), 0, 0);
+        bar.addView(powered, fullWidth());
+
+        TextView license = text("开源协议", 11, accent(), false);
+        license.setGravity(Gravity.CENTER);
+        license.setPadding(0, dp(3), 0, 0);
+        license.setOnClickListener(v -> showLicense());
+        bar.addView(license, fullWidth());
+        return bar;
+    }
+
+    private LinearLayout.LayoutParams fullWidth() {
+        return new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+    }
+
+    private String installedVersion() {
         try {
             String installed = getPackageManager()
                     .getPackageInfo(getPackageName(), 0).versionName;
-            if (installed != null && !installed.isEmpty()) versionName = installed;
+            if (installed != null && !installed.isEmpty()) return installed;
         } catch (Throwable ignored) {
         }
-        TextView version = text(versionName, 12, subColor(), false);
-        footer.addView(version, new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        TextView refresh = text("刷新", 13, accent(), false);
-        refresh.setPadding(dp(12), dp(10), dp(4), dp(10));
-        refresh.setOnClickListener(v -> {
-            probeLsposed(true);
-            refreshStatus();
-        });
-        footer.addView(refresh);
-        return footer;
+        return "1.3.7";
+    }
+
+    private void showLicense() {
+        String text;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                getResources().openRawResource(R.raw.license),
+                StandardCharsets.UTF_8))) {
+            StringBuilder builder = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                builder.append(line).append('\n');
+            }
+            text = builder.toString();
+        } catch (Throwable t) {
+            text = "MIT License\n\nCopyright (c) 2026 JiuQing";
+        }
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(12);
+        view.setTextColor(textColor());
+        int pad = dp(18);
+        view.setPadding(pad, dp(8), pad, dp(8));
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(view);
+        new AlertDialog.Builder(this)
+                .setTitle("开源协议")
+                .setView(scroll)
+                .setPositiveButton("关闭", null)
+                .show();
     }
 
     private LinearLayout card() {
