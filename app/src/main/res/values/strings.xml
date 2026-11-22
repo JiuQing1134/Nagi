@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">凪</string>
+    <string name="accessibility_description">仅用于识别荣耀“软件更新”页面并显示“已是最新”；不会读取其他应用内容。</string>
+</resources>
