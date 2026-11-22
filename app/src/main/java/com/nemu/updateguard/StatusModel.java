@@ -20,6 +20,12 @@ final class StatusModel {
         UNKNOWN
     }
 
+    /** States that count as "已激活" for the chip and its click action. */
+    static boolean isActive(State state) {
+        return state == State.FRESH_ACTIVE
+                || state == State.ENABLED_HISTORICAL_ACTIVE;
+    }
+
     static State compute(
             boolean installed,
             boolean hookFresh,

@@ -377,59 +377,12 @@ public class MainActivity extends Activity {
                     .show();
             return;
         }
-        boolean active = freshActive();
-        boolean failed = freshFailed();
-        if (Boolean.TRUE.equals(lsposedManagerEnabled) && active) {
-            // Already active and the manager switch is known to be ON. Open
-            // the manager directly; launchLsposed() only uses a Toast, so the
-            // chip/status state is not replaced.
-            launchLsposed();
+        if (uiActive()) {
+            toast("已激活");
             return;
         }
-        String message;
-        if (lsposedProbeFailed) {
-            if (active) {
-                message = "当前软件更新的 hook 已生效；管理器状态读取失败，"
-                        + "请打开管理器确认开关和作用域。";
-            } else if (failed) {
-                message = "软件更新的 hook 未生效；管理器状态读取失败，"
-                        + "请打开管理器确认模块状态。";
-            } else {
-                message = "管理器状态读取失败，点刷新重试，或打开管理器确认模块状态。";
-            }
-        } else if (Boolean.FALSE.equals(lsposedManagerEnabled) && active) {
-            message = "此前软件更新的 hook 已生效，但管理器里已关闭。"
-                    + "新启动的软件更新进程不会再加载 hook；请打开管理器确认或重新启用。";
-        } else if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
-            message = "在 LSPosed 管理器中启用凪，作用域勾选“软件更新”，然后重启一次。";
-        } else if (Boolean.FALSE.equals(lsposedOucScoped) && active) {
-            message = "此前软件更新的 hook 已生效，但作用域里已取消“软件更新”。"
-                    + "新启动的软件更新进程不会再加载 hook；请打开管理器重新勾选。";
-        } else if (Boolean.FALSE.equals(lsposedOucScoped)) {
-            message = "在 LSPosed 管理器中确认凪已启用，并把“软件更新”加入作用域，然后重启一次。";
-        } else if (failed) {
-            message = "模块已注入，但软件更新的 hook 未生效，软件更新可能已改版。"
-                    + "请到 LSPosed 管理器中确认模块状态。";
-        } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
-            if (LsposedState.isActive(this)) {
-                message = "上次软件更新的 hook 已生效，但当前进程未上报。"
-                        + "模块已启用；请重启软件更新。";
-            } else if (LsposedState.hookFailed(this)) {
-                message = "上次软件更新的 hook 未生效。模块已启用；请重启软件更新后重试。";
-            } else {
-                message = "模块已启用，重启软件更新后生效。";
-            }
-        } else if (active) {
-            message = "当前软件更新进程的 hook 已生效。可以打开管理器查看模块开关。";
-        } else {
-            message = "在 LSPosed 管理器中启用凪，作用域勾选“软件更新”，然后重启一次。";
-        }
-        new AlertDialog.Builder(this)
-                .setTitle("LSPosed")
-                .setMessage(message)
-                .setPositiveButton("打开管理器", (dialog, which) -> launchLsposed())
-                .setNegativeButton("取消", null)
-                .show();
+        // Not active: the chip is the shortcut into LSPosed for fixing it.
+        launchLsposed();
     }
 
     private void launchLsposed() {
@@ -572,9 +525,9 @@ public class MainActivity extends Activity {
     private void styleLsposedChip() {
         if (lsposedChip == null) return;
         boolean installed = lsposedInstalled();
-        // The check mark means this foreground check received a live hook
-        // report, not merely a report saved earlier this boot.
-        boolean active = freshActive();
+        // The check mark also accepts a successful hook earlier this boot;
+        // OUC not running right now is not shown as a yellow warning.
+        boolean active = uiActive();
         lsposedChip.setText(active ? "✓ LSPosed" : "LSPosed");
         lsposedChip.setTextColor(active ? onAccent()
                 : installed ? textColor() : subColor());
@@ -624,7 +577,7 @@ public class MainActivity extends Activity {
                 modeStatus.setText("LSPosed · 作用域未勾选软件更新");
                 break;
             case ENABLED_HISTORICAL_ACTIVE:
-                modeStatus.setText("LSPosed · 已启用，当前进程未上报");
+                modeStatus.setText("LSPosed · 已激活");
                 break;
             case ENABLED_HISTORICAL_FAILED:
                 modeStatus.setText("LSPosed · 已启用，上次 hook 未生效");
@@ -730,14 +683,9 @@ public class MainActivity extends Activity {
                 LsposedState.hookFailed(this));
     }
 
-    private boolean freshActive() {
-        return hookReportFresh && LsposedState.active
-                && !LsposedState.processGone;
-    }
-
-    private boolean freshFailed() {
-        return hookReportFresh && !LsposedState.active
-                && !LsposedState.processGone;
+    /** Fresh success, or a successful hook earlier this boot. */
+    private boolean uiActive() {
+        return StatusModel.isActive(statusState());
     }
 
     /** Subtitle note when the running hook is still alive but new OUC
@@ -818,8 +766,8 @@ public class MainActivity extends Activity {
                 break;
             case ENABLED_HISTORICAL_ACTIVE:
                 modeTitle.setText("LSPosed");
-                modeSubtitle.setText("已启用，当前软件更新进程未上报（上次 hook 已生效）");
-                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+                modeSubtitle.setText("已激活，软件更新已返回最新");
+                modeDot.setBackground(rounded(accent(), 999, 0));
                 break;
             case ENABLED_HISTORICAL_FAILED:
                 modeTitle.setText("LSPosed");
@@ -829,7 +777,7 @@ public class MainActivity extends Activity {
             case ENABLED:
                 modeTitle.setText("LSPosed");
                 modeSubtitle.setText("已启用，重启软件更新后生效");
-                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+                modeDot.setBackground(rounded(mutedDot(), 999, 0));
                 break;
             default:
                 modeTitle.setText("LSPosed");

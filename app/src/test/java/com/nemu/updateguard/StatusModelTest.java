@@ -1,6 +1,8 @@
 package com.nemu.updateguard;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -39,6 +41,15 @@ public class StatusModelTest {
                 state(true, false, false, false, true, false, false, false, false, false));
         assertEquals(StatusModel.State.SCOPE_OFF,
                 state(true, false, false, false, true, false, null, false, false, false));
+    }
+
+    @Test
+    public void activeStatesForUi() {
+        assertTrue(StatusModel.isActive(StatusModel.State.FRESH_ACTIVE));
+        assertTrue(StatusModel.isActive(StatusModel.State.ENABLED_HISTORICAL_ACTIVE));
+        assertFalse(StatusModel.isActive(StatusModel.State.FRESH_FAILED));
+        assertFalse(StatusModel.isActive(StatusModel.State.MANAGER_OFF));
+        assertFalse(StatusModel.isActive(StatusModel.State.ENABLED));
     }
 
     @Test

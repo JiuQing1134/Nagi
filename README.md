@@ -4,7 +4,7 @@
 不冻结、不卸载 OUC，不修改系统版本号。
 
 - **applicationId**：`com.nemu.windstop`（源码命名空间 `com.nemu.updateguard`）
-- **版本**：`1.3.8` / `versionCode 35`
+- **版本**：`1.3.8` / `versionCode 36`
 - **图标**：白底翠绿三角回环，圆点位于正中心；名字是 **凪**。
 - **配套项目（Nemu / 眠梦）**：https://github.com/JiuQing1134/Nemu
 - **完整地址与产物**：[`PROJECTS.md`](PROJECTS.md)
@@ -17,12 +17,13 @@
 - 1.3.5 起删除了独立模式（无障碍覆盖层）及 Root / Shizuku / ADB 通道。
   没有 LSPosed 时，本 App 不会拦截更新。
 
-> “已激活”只以**这次进入前台/点刷新后收到的 fresh hook 报告**为准。App 会发一次请求广播；
-> OUC 主进程如果已 hook，会在约 0.5 秒内通过 `HookReportService` 重报。超过 2 秒没有报告，
-> 就不再沿用旧报告的“已激活”，显示“当前软件更新进程未上报（上次 hook 已生效）”。
-> 如果 OUC 进程在凪保持前台时退出，报告的 Binder death 会立即把上次报告标为失效，
-> 不需要轮询。LSPosed 管理器开关/作用域是另一层配置：关闭只影响新进程，不会卸载已运行
-> OUC 进程里的 hook。
+> “已激活”优先以**这次进入前台/点刷新后收到的 fresh hook 报告**为准。App 会发一次请求广播；
+> OUC 主进程如果已 hook，会在约 0.5 秒内通过 `HookReportService` 重报。超过 2 秒没有新报告时，
+> 只要本次开机曾经成功 hook 过，仍显示“已激活”，不再显示黄色“当前进程未上报”。
+> 只有本次开机从未成功 hook、fresh 报告明确失败、或管理器开关/作用域被关闭/取消时，
+> 才显示非激活状态。OUC 进程退出时 Binder death 会标记这次 fresh 报告失效，但已成功 hook
+> 的历史仍按激活显示；重新打开软件更新并点检查更新后会收到新报告。LSPosed 管理器开关/
+> 作用域是另一层配置：关闭只影响新进程，不会卸载已运行 OUC 进程里的 hook。
 >
 > App 每次进入前台（启动/从后台切回）或点“刷新”时，通过 root 只读查询一次管理器
 > `modules_state` 和 `scope`；没有周期轮询。复制 DB/WAL 前后会做 stat 校验，源文件在复制期间
@@ -35,20 +36,22 @@ App 会在每次进入前台/点“刷新”时显示 LSPosed 的状态：
 
 | 状态 | 显示 | 点芯片 |
 |---|---|---|
-| 管理器里关闭、当前没有 hook 报告 | 已在管理器中关闭 | 弹说明框并跳转管理器 |
-| 已启用、尚未注入 | 已启用，重启软件更新后生效 | 弹说明框并跳转管理器 |
-| 已启用但作用域未勾选软件更新 | 已启用，但作用域未勾选软件更新 | 弹说明框并跳转管理器 |
-| fresh hook 失败 | 已注入，hook 未生效，OUC 可能已更新 | 弹说明框并跳转管理器 |
-| 本次前台收到 hook 成功报告 | 已激活，软件更新已返回最新 | 打开 LSPosed 管理器 |
-| fresh hook 成功但管理器已关闭 | 已激活（管理器已关闭，新进程不再生效） | 说明新进程不再生效 |
-| 本次前台 2 秒内没有 hook 报告，或 OUC 进程已退出 | 已启用，当前软件更新进程未上报（上次 hook 已生效） | 弹说明框/打开管理器 |
-| 管理器状态读取失败 | 管理器状态读取失败，点刷新重试 | 弹说明框并跳转管理器 |
+| 管理器里关闭、当前没有 hook 报告 | 已在管理器中关闭 | 直接打开 LSPosed 管理器 |
+| 已启用、尚未注入 | 已启用，重启软件更新后生效（灰点） | 直接打开 LSPosed 管理器 |
+| 已启用但作用域未勾选软件更新 | 已启用，但作用域未勾选软件更新 | 直接打开 LSPosed 管理器 |
+| fresh hook 失败 | 已注入，hook 未生效，OUC 可能已更新 | 直接打开 LSPosed 管理器 |
+| 本次前台收到 hook 成功报告，或本次开机曾 hook 成功 | 已激活，软件更新已返回最新 | 只提示“已激活”，不打开管理器 |
+| fresh hook 成功但管理器已关闭 | 已激活（管理器已关闭，新进程不再生效） | 只提示“已激活” |
+| 本次前台 2 秒内没有新报告，但本次开机曾 hook 成功 | 已激活，软件更新已返回最新 | 只提示“已激活” |
+| 本次开机从未 hook 成功、OUC 尚未启动 | 已启用，重启软件更新后生效（灰点） | 直接打开 LSPosed 管理器 |
+| 管理器状态读取失败 | 管理器状态读取失败，点刷新重试 | 直接打开 LSPosed 管理器 |
 
 App 会同时读取 LSPosed 的 `scope` 表，确认 `com.hihonor.ouc` 仍在作用域；取消勾选会提示“作用域未勾选软件更新”。
 
 > 覆盖安装新 APK 后，LSPosed 可能自动把模块开关置为关闭；到 LSPosed 里重新打开并重启即可。
-> App 在下一次进入前台/点刷新时显示管理器已关闭；只有本次前台收到新的 hook 报告才会显示“已激活”，
-> 旧报告不会继续冒充当前激活。
+> App 在下一次进入前台/点刷新时显示管理器已关闭；如果管理器仍开启、只是没有 fresh 报告，
+> 本次开机曾成功 hook 就仍按“已激活”显示。点 LSPosed 芯片时，已激活只提示“已激活”；
+> 未激活才打开 LSPosed 管理器。
 
 ## 构建
 
@@ -59,7 +62,7 @@ cd D:\win_root\nemu-update-guard
 .\gradlew.bat :app:assembleRelease
 ```
 
-`testDebugUnitTest` 9 项通过（`ProbeStatTest` 5 项 + `StatusModelTest` 4 项）；
+`testDebugUnitTest` 10 项通过（`ProbeStatTest` 5 项 + `StatusModelTest` 5 项）；
 `lintRelease` 目前 **0 errors / 0 warnings**（中文硬编码、adaptive icon -v26、targetSdk 36
 都在 `lint.xml`/manifest 里注明了有意忽略）。`.github/workflows/android.yml` 会在 push/PR 时
 跑测试、lint、release 构建。Release 构建在 CI/没有 `keystore.properties` 的机器上会 fallback
