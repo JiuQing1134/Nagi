@@ -18,6 +18,9 @@ import android.util.Log;
  */
 public class HookReportService extends Service {
     public static final int MSG_REPORT = 1;
+    /** Sent by Nagi to ask the hooked OUC process to report again. */
+    public static final String ACTION_REQUEST_HOOK_REPORT =
+            "com.nemu.windstop.action.REQUEST_HOOK_REPORT";
     private static final String OUC = "com.hihonor.ouc";
     private static final String TAG = "UpdateGuard";
 

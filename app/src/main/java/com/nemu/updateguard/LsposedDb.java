@@ -23,12 +23,25 @@ final class LsposedDb {
     private static final String SRC_DB =
             "/data/adb/lspd/config/modules_config.db";
     private static final String MODULE = "com.nemu.windstop";
+    private static final String OUC = "com.hihonor.ouc";
 
     private LsposedDb() {
     }
 
-    /** @return TRUE/FALSE when the manager state was read, null otherwise. */
-    static Boolean queryEnabled(Context context) {
+    /** Manager switch plus whether OUC is still in the module's scope. */
+    static final class State {
+        final boolean enabled;
+        /** null means the scope table could not be read. */
+        final Boolean oucScoped;
+
+        State(boolean enabled, Boolean oucScoped) {
+            this.enabled = enabled;
+            this.oucScoped = oucScoped;
+        }
+    }
+
+    /** @return the manager state, or null when it could not be read. */
+    static State queryState(Context context) {
         File dir = new File(context.getCacheDir(), "lspd_probe");
         try {
             deleteTree(dir);
@@ -51,18 +64,16 @@ final class LsposedDb {
             SQLiteDatabase sql = SQLiteDatabase.openDatabase(
                     db.getAbsolutePath(), null, SQLiteDatabase.OPEN_READWRITE);
             try {
-                Cursor c = sql.rawQuery(
-                        "SELECT enabled FROM modules_state "
-                                + "WHERE module_pkg_name=? AND user_id=0",
-                        new String[]{MODULE});
+                Boolean enabled = queryEnabled(sql);
+                if (enabled == null) return null;
+                Boolean oucScoped = null;
                 try {
-                    if (c.moveToFirst()) {
-                        return c.getInt(0) != 0;
-                    }
-                } finally {
-                    c.close();
+                    oucScoped = queryOucScope(sql);
+                } catch (Throwable t) {
+                    // Older/forked LSPosed databases may not have scope.
+                    Log.w(TAG, "lspd probe: scope query failed", t);
                 }
-                return null;
+                return new State(enabled, oucScoped);
             } finally {
                 sql.close();
             }
@@ -71,6 +82,31 @@ final class LsposedDb {
             return null;
         } finally {
             deleteTree(dir);
+        }
+    }
+
+    private static Boolean queryEnabled(SQLiteDatabase sql) {
+        Cursor c = sql.rawQuery(
+                "SELECT enabled FROM modules_state "
+                        + "WHERE module_pkg_name=? AND user_id=0",
+                new String[]{MODULE});
+        try {
+            if (c.moveToFirst()) return c.getInt(0) != 0;
+        } finally {
+            c.close();
+        }
+        return null;
+    }
+
+    private static Boolean queryOucScope(SQLiteDatabase sql) {
+        Cursor c = sql.rawQuery(
+                "SELECT 1 FROM scope WHERE module_pkg_name=? "
+                        + "AND app_pkg_name=? AND user_id=0",
+                new String[]{MODULE, OUC});
+        try {
+            return c.moveToFirst();
+        } finally {
+            c.close();
         }
     }
 

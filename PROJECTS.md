@@ -31,16 +31,19 @@
 - **GitHub**：https://github.com/JiuQing1134/Nagi
 - **applicationId**：`com.nemu.windstop`
 - **源码命名空间**：`com.nemu.updateguard`
-- **版本**：`1.3.8` / `versionCode 31`
+- **版本**：`1.3.8` / `versionCode 33`
 - **APK**：`D:\win_root\nemu-update-guard\app\build\outputs\apk\release\app-release.apk`
-  - 2,149,802 字节
-  - SHA-256：`013d3d0bc35a725e239cbbb755d8f487f29750c63c9be795ea832506defe899e`
+  - 2,149,682 字节
+  - SHA-256：`a8f0d231f011b6c9d3bd3e04f4367527960f09eed8acdb1d17989fb94cc8b90c`
+- **签名**：私有 keystore `keystore/nagi-release.jks` + `keystore.properties`（均被 `.gitignore` 忽略），
+  备份 `D:\win_root\nagi-signing-backup\`；证书 SHA-256 `1F:45:7A:B9:F6:82:68:E0:20:31:44:6C:CF:6F:F5:2A:5E:ED:AE:42:5F:AF:AB:53:B9:8E:5A:6F:04:82:61:BB`。
+  丢失 keystore/密码后无法覆盖更新，只能卸载重装。
 - **开源协议**：CC BY-NC 4.0（署名—非商业性使用 4.0 国际），Copyright (c) 2026 JiuQing，见 [LICENSE](LICENSE)。
 - **文档**：
   - `D:\win_root\nemu\docs\14-update-guard.md`
   - `D:\win_root\nemu\docs\15-task-status-2026-11-22.md`
 - **用途**：仅通过 LSPosed 让软件更新显示“已是最新”，不冻结/不卸载 OUC，不修改系统版本号。
-- **LSPosed**：作用域 `系统框架 (system)` + `软件更新 (com.hihonor.ouc)`；模块开关关闭/已启用待注入/hook 未生效/已激活四态会实时显示。hook 成功优先于管理器开关：管理器关闭不会清掉已运行 OUC 进程的激活状态，只注明“管理器已关闭”；管理器开关通过 root 只读查询 `modules_state`，前台每 5 秒刷新。
+- **LSPosed**：作用域仅 `软件更新 (com.hihonor.ouc)`；模块开关关闭/已启用待注入/作用域未勾选/hook 未生效/已激活会在进入前台/点刷新时显示。hook 成功优先于管理器开关：管理器关闭不会清掉已运行 OUC 进程的激活状态，只注明“管理器已关闭”；管理器开关和 `scope` 通过 root 只读查询，进入前台/点刷新时检查一次（无周期轮询）。
 - **图标**：白底翠绿三角回环，圆点位于正中心。
 
 ## 3. 共用信息
@@ -49,6 +52,6 @@
   仅参考 suspend 机制与公开文档，不依赖、不调用其 API/Intent/数据。
 - **当前设备状态（2026-11-22）**：
   - Nemu：0 个冻结目标，OUC `suspended=false`，SafetyService 未运行。
-  - 凪：LSPosed 已启用并激活，管理器开关 `enabled=1` 可由 root 读取；独立模式关闭；无障碍已关闭；桌面图标固定显示。
+  - 凪：私有签名版 v32 已安装（UID 10309）；LSPosed 已启用并激活，管理器开关 `enabled=1`、作用域 `com.hihonor.ouc` 可由 root 读取；仅 LSPosed 模式，无独立模式/无障碍入口；桌面图标固定显示。卸载重装后 FinaSU allowlist 已重新授权。
   - 两个 App 均请求 120 Hz（`mActiveModeId=3 / renderFrameRate 120.00001`）。
-- **注意**：覆盖安装凪的新 APK 后，LSPosed 可能自动把模块开关置为关闭；到 LSPosed 中重新打开并重启即可。App 会立即显示“已在管理器中关闭”。
+- **注意**：覆盖安装凪的新 APK 后，LSPosed 可能自动把模块开关置为关闭；到 LSPosed 中重新打开并重启即可。App 会在下一次探测时显示管理器关闭；已运行 OUC 进程的 hook 仍按 hook 优先显示。

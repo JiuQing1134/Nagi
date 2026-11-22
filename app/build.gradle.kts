@@ -19,7 +19,7 @@ android {
         applicationId = "com.nemu.windstop"
         minSdk = 30
         targetSdk = 36
-        versionCode = 31
+        versionCode = 33
         versionName = "1.3.8"
     }
 
@@ -46,6 +46,10 @@ android {
                 // release APK can overwrite existing debug installs. Add
                 // keystore.properties to switch to a private key (needs one
                 // clean reinstall because the signature changes).
+                project.logger.warn(
+                    "WARNING: release is signed with the public debug keystore. " +
+                            "Do not publish this APK; configure keystore.properties " +
+                            "with a private key for distribution.")
                 signingConfigs.getByName("debug")
             }
         }

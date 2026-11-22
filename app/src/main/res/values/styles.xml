@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.UpdateGuard" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">#FFFFF7FA</item>
+        <item name="android:windowBackground">#FFFAFAFA</item>
         <item name="android:windowIsTranslucent">false</item>
-        <item name="android:statusBarColor">#FFFFF7FA</item>
-        <item name="android:navigationBarColor">#FFFFF7FA</item>
+        <item name="android:statusBarColor">#FFFAFAFA</item>
+        <item name="android:navigationBarColor">#FFFAFAFA</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>
