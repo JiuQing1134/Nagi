@@ -3,12 +3,7 @@ package com.nemu.updateguard;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.NotificationManager;
-import android.content.ClipData;
-import android.content.ClipboardManager;
-import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Typeface;
@@ -19,8 +14,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.ParcelFileDescriptor;
-import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -29,42 +22,20 @@ import android.view.WindowManager;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
-
-import moe.shizuku.server.IShizukuService;
-import rikka.shizuku.Shizuku;
-
 /**
- * Minimal control panel. One switch enables the standalone overlay. The four
- * mode chips are real controls: LSPosed opens the manager, Root and Shizuku
- * enable the accessibility overlay, ADB copies the equivalent commands.
- * Nothing here suspends, disables, or freezes OUC.
+ * LSPosed-only control panel. The module reports its OUC hook result through
+ * HookReportService; this screen displays that state and opens the LSPosed
+ * manager. Nothing here suspends, disables, or freezes OUC.
  */
 public class MainActivity extends Activity {
-    private static final String PREFS = "update_sleep";
     private static final String LSPOSED_PACKAGE = "org.lsposed.manager";
-    private static final int REQ_SHIZUKU = 8;
     private static final long LSPOSED_PROBE_INTERVAL_MS = 10000L;
 
     private boolean dark;
-    private boolean switchUpdating;
-    private boolean rootCheckInFlight;
-    private boolean rootCheckAttempted;
-    private long lastRootCheckAt;
-    private volatile boolean rootOk;
     private long lastFeedbackAt;
-    private String selectedMode = "";
-    private SharedPreferences prefs;
 
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private Runnable statusRestore;
@@ -73,34 +44,16 @@ public class MainActivity extends Activity {
     private TextView modeTitle;
     private TextView modeSubtitle;
     private TextView modeStatus;
-    private TextView lsposedMode;
-    private TextView rootMode;
-    private TextView shizukuMode;
-    private TextView adbMode;
-    private Switch independentSwitch;
+    private TextView lsposedChip;
     private volatile Boolean lsposedManagerEnabled = null;
     private volatile long lsposedProbeAt = 0L;
     private volatile boolean lsposedProbeRunning = false;
-
-    private final Shizuku.OnRequestPermissionResultListener shizukuPermissionListener =
-            (requestCode, grantResult) -> {
-                if (requestCode != REQ_SHIZUKU) return;
-                runOnUiThread(() -> {
-                    if (grantResult == PackageManager.PERMISSION_GRANTED) {
-                        runShizukuEnable();
-                    } else {
-                        feedback("Shizuku 授权被拒绝");
-                    }
-                });
-            };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         dark = (getResources().getConfiguration().uiMode
                 & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
-        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        selectedMode = prefs.getString("mode", "");
         removeLegacyIconChannels();
 
         ScrollView scroll = new ScrollView(this);
@@ -121,7 +74,6 @@ public class MainActivity extends Activity {
         setContentView(scroll);
         applySystemBars();
         applyHighRefreshRate();
-        Shizuku.addRequestPermissionResultListener(shizukuPermissionListener);
         refreshStatus();
     }
 
@@ -144,7 +96,6 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         uiHandler.removeCallbacksAndMessages(null);
-        Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener);
         super.onDestroy();
     }
 
@@ -226,57 +177,16 @@ public class MainActivity extends Activity {
                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         card.addView(modeRow);
 
-        LinearLayout firstRow = chipRow(14);
-        lsposedMode = modeChip(firstRow, "LSPosed", "lsposed", this::openLsposed);
-        rootMode = modeChip(firstRow, "Root", "root", this::enableViaRoot);
-        card.addView(firstRow);
-
-        LinearLayout secondRow = chipRow(8);
-        shizukuMode = modeChip(secondRow, "Shizuku", "shizuku", this::enableViaShizuku);
-        adbMode = modeChip(secondRow, "ADB", "adb", this::copyAdbCommand);
-        card.addView(secondRow);
+        LinearLayout chipRow = chipRow(14);
+        lsposedChip = modeChip(chipRow, "LSPosed", this::openLsposed);
+        card.addView(chipRow);
 
         modeStatus = text("", 11, subColor(), false);
         modeStatus.setPadding(dp(2), dp(10), dp(2), 0);
         modeStatus.setMinHeight(dp(30));
         modeStatus.setMaxLines(2);
-        modeStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        modeStatus.setEllipsize(TextUtils.TruncateAt.END);
         card.addView(modeStatus);
-
-        View divider = new View(this);
-        LinearLayout.LayoutParams dividerLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(1));
-        dividerLp.topMargin = dp(12);
-        dividerLp.bottomMargin = dp(4);
-        divider.setBackgroundColor(stroke());
-        card.addView(divider, dividerLp);
-
-        LinearLayout switchRow = new LinearLayout(this);
-        switchRow.setOrientation(LinearLayout.HORIZONTAL);
-        switchRow.setGravity(Gravity.CENTER_VERTICAL);
-        switchRow.setPadding(0, dp(8), 0, 0);
-        TextView switchLabel = text("独立模式", 15, textColor(), false);
-        switchRow.addView(switchLabel, new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        independentSwitch = new Switch(this);
-        int[][] states = new int[][]{
-                new int[]{android.R.attr.state_checked},
-                new int[]{}
-        };
-        independentSwitch.setThumbTintList(new ColorStateList(
-                states, new int[]{0xFFFFFFFF, 0xFFFFFFFF}));
-        independentSwitch.setTrackTintList(new ColorStateList(
-                states, new int[]{accent(), mutedDot()}));
-        independentSwitch.setOnCheckedChangeListener((button, checked) -> {
-            if (switchUpdating) return;
-            if (checked) {
-                enableIndependentMode();
-            } else {
-                disableIndependentMode();
-            }
-        });
-        switchRow.addView(independentSwitch);
-        card.addView(switchRow);
         return card;
     }
 
@@ -287,10 +197,8 @@ public class MainActivity extends Activity {
         return row;
     }
 
-    private TextView modeChip(LinearLayout parent, String label, String mode,
-                              Runnable action) {
+    private TextView modeChip(LinearLayout parent, String label, Runnable action) {
         TextView chip = new TextView(this);
-        chip.setTag(mode);
         chip.setText(label);
         chip.setTextSize(12);
         chip.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
@@ -305,46 +213,19 @@ public class MainActivity extends Activity {
         chip.setStateListAnimator(null);
         chip.setBackground(chipBackground(false));
         chip.setOnClickListener(v -> action.run());
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(46), 1f);
-        lp.setMarginEnd(dp(6));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(46));
         parent.addView(chip, lp);
         return chip;
-    }
-
-    private boolean isLsposedManagerOn() {
-        Boolean manager = lsposedManagerEnabled;
-        if (manager != null) return manager;
-        return LsposedState.isActive(this);
-    }
-
-    private void openLsposed() {
-        if (isLsposedManagerOn()) {
-            setSelectedMode("lsposed");
-            feedback("LSPosed 已激活");
-            refreshStatus();
-            return;
-        }
-        new AlertDialog.Builder(this)
-                .setTitle("LSPosed")
-                .setMessage("在 LSPosed 管理器中启用凪，作用域勾选“系统框架”和“软件更新”，然后重启一次。")
-                .setPositiveButton("打开管理器", (dialog, which) -> launchLsposed())
-                .setNegativeButton("取消", null)
-                .show();
-    }
-
-    private boolean isLsposedActive() {
-        Boolean manager = lsposedManagerEnabled;
-        if (manager != null) return manager;
-        return LsposedState.isActive(this);
     }
 
     /**
      * Reads LSPosed's own module switch. The hook report only covers the
      * current boot; this probe notices a later OFF toggle in the manager.
-     * Root is used read-only; failure keeps the hook report as the fallback.
+     * Root is used read-only when available; failure keeps the hook report.
      */
     private void probeLsposed(boolean force) {
-        if (!rootOk || lsposedProbeRunning) return;
+        if (lsposedProbeRunning || !lsposedInstalled()) return;
         long now = System.currentTimeMillis();
         if (!force && now - lsposedProbeAt < LSPOSED_PROBE_INTERVAL_MS) return;
         lsposedProbeRunning = true;
@@ -367,6 +248,29 @@ public class MainActivity extends Activity {
         if (modeTitle != null) refreshStatus();
     };
 
+    private void openLsposed() {
+        if (LsposedState.isActive(this)) {
+            feedback("LSPosed 已激活");
+            refreshStatus();
+            return;
+        }
+        String message;
+        if (LsposedState.hookFailed(this)) {
+            message = "模块已注入，但 OUC 的 hook 未生效，OUC 可能已更新。"
+                    + "请到 LSPosed 管理器中确认模块状态。";
+        } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
+            message = "模块已启用，打开软件更新后生效。";
+        } else {
+            message = "在 LSPosed 管理器中启用凪，作用域勾选“系统框架”和“软件更新”，然后重启一次。";
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("LSPosed")
+                .setMessage(message)
+                .setPositiveButton("打开管理器", (dialog, which) -> launchLsposed())
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
     private void launchLsposed() {
         Intent intent = getPackageManager().getLaunchIntentForPackage(LSPOSED_PACKAGE);
         if (intent == null) {
@@ -382,93 +286,17 @@ public class MainActivity extends Activity {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
             startActivity(intent);
-            setSelectedMode("lsposed");
             feedback("已打开 LSPosed");
         } catch (Throwable t) {
             feedback("无法打开 LSPosed");
         }
     }
 
-    private void enableViaRoot() {
-        feedback("正在通过 Root 开启…");
-        new Thread(() -> {
-            String id = execute("id", null);
-            boolean root = id.contains("uid=0");
-            String out = "";
-            if (root) {
-                out = execute(enableAccessibilityCommand() + " && echo __OK__", null);
-            }
-            boolean opened = out.contains("__OK__");
-            runOnUiThread(() -> {
-                rootOk = root;
-                if (opened) {
-                    setSelectedMode("root");
-                    feedback("Root · 独立模式已开启");
-                } else if (!root) {
-                    feedback("未获得 Root 权限，请先授权");
-                } else {
-                    feedback("Root 已授权，但独立模式开启失败");
-                }
-                refreshStatus();
-            });
-        }).start();
-    }
-
-    private void enableViaShizuku() {
-        try {
-            if (!Shizuku.pingBinder()) {
-                feedback("Shizuku 未运行，请先启动 Shizuku");
-                return;
-            }
-            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                Shizuku.requestPermission(REQ_SHIZUKU);
-                feedback("请在 Shizuku 中允许凪");
-                return;
-            }
-        } catch (Throwable t) {
-            feedback("Shizuku 不可用");
-            return;
-        }
-        runShizukuEnable();
-    }
-
-    private void runShizukuEnable() {
-        if (!shizukuGranted()) return;
-        feedback("正在通过 Shizuku 开启…");
-        new Thread(() -> {
-            String result = shizukuExec(enableAccessibilityCommand() + " && echo __OK__");
-            boolean opened = result.contains("__OK__") && parseExit(result) == 0;
-            runOnUiThread(() -> {
-                if (opened) {
-                    setSelectedMode("shizuku");
-                    feedback("Shizuku · 独立模式已开启");
-                } else {
-                    feedback("Shizuku 执行失败" + detail(result));
-                }
-                refreshStatus();
-            });
-        }).start();
-    }
-
-    private void copyAdbCommand() {
-        String merged = mergedAccessibilityServices();
-        String cmd = "adb shell settings put secure enabled_accessibility_services "
-                + merged + "\n"
-                + "adb shell settings put secure accessibility_enabled 1";
-        ClipboardManager clipboard =
-                (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        if (clipboard != null) {
-            clipboard.setPrimaryClip(ClipData.newPlainText("ADB", cmd));
-        }
-        setSelectedMode("adb");
-        feedback("ADB 命令已复制");
-    }
-
     private LinearLayout footer() {
         LinearLayout footer = new LinearLayout(this);
         footer.setOrientation(LinearLayout.HORIZONTAL);
         footer.setGravity(Gravity.CENTER_VERTICAL);
-        String versionName = "1.3.4";
+        String versionName = "1.3.5";
         try {
             String installed = getPackageManager()
                     .getPackageInfo(getPackageName(), 0).versionName;
@@ -481,7 +309,6 @@ public class MainActivity extends Activity {
         TextView refresh = text("刷新", 13, accent(), false);
         refresh.setPadding(dp(12), dp(10), dp(4), dp(10));
         refresh.setOnClickListener(v -> {
-            rootCheckAttempted = false;
             probeLsposed(true);
             refreshStatus();
         });
@@ -533,66 +360,32 @@ public class MainActivity extends Activity {
         return new RippleDrawable(ColorStateList.valueOf(rippleColor), base, null);
     }
 
-    private void styleChips() {
-        if (lsposedMode == null) return;
-        boolean lsposed = lsposedInstalled();
-        boolean shizuku = shizukuGranted();
-        boolean adb = adbEnabled();
-        styleChip(lsposedMode, "LSPosed", lsposed,
-                lsposed && "lsposed".equals(selectedMode));
-        styleChip(rootMode, "Root", rootOk, rootOk && "root".equals(selectedMode));
-        styleChip(shizukuMode, "Shizuku", shizuku,
-                shizuku && "shizuku".equals(selectedMode));
-        styleChip(adbMode, "ADB", true, "adb".equals(selectedMode));
+    private void styleLsposedChip() {
+        if (lsposedChip == null) return;
+        boolean installed = lsposedInstalled();
+        boolean active = LsposedState.isActive(this);
+        lsposedChip.setText(active ? "✓ LSPosed" : "LSPosed");
+        lsposedChip.setTextColor(active ? onAccent()
+                : installed ? textColor() : subColor());
+        lsposedChip.setAlpha(installed || active ? 1f : 0.55f);
+        lsposedChip.setBackground(chipBackground(active));
     }
 
-    private void styleChip(TextView chip, String label, boolean available,
-                           boolean selected) {
-        chip.setText(selected ? "✓ " + label : label);
-        chip.setTextColor(selected ? onAccent() : available ? textColor() : subColor());
-        chip.setAlpha(selected || available ? 1f : 0.55f);
-        chip.setBackground(chipBackground(selected));
-    }
-
-    private void setSelectedMode(String mode) {
-        selectedMode = mode;
-        prefs.edit().putString("mode", mode).apply();
-        styleChips();
-        updateModeStatus(isAccessibilityEnabled());
-    }
-
-    private String modeLabel(String mode) {
-        switch (mode) {
-            case "lsposed": return "LSPosed";
-            case "root": return "Root";
-            case "shizuku": return "Shizuku";
-            case "adb": return "ADB";
-            default: return "";
-        }
-    }
-
-    private void updateModeStatus(boolean a11y) {
+    private void updateModeStatus() {
         if (modeStatus == null) return;
         if (System.currentTimeMillis() - lastFeedbackAt < 3000L) return;
-        String label = modeLabel(selectedMode);
-        if ("lsposed".equals(selectedMode) && !a11y) {
-            if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
-                modeStatus.setText("LSPosed · 已在管理器中关闭，点芯片打开");
-            } else if (LsposedState.hookFailed(this)) {
-                modeStatus.setText("LSPosed · 已注入，hook 未生效，OUC 可能已更新");
-            } else if (LsposedState.isActive(this)) {
-                modeStatus.setText("LSPosed · 已激活，更新检查返回已最新");
-            } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
-                modeStatus.setText("LSPosed · 已启用，打开软件更新后生效");
-            } else {
-                modeStatus.setText("LSPosed · 状态未知，点芯片打开管理器");
-            }
-        } else if (label.isEmpty()) {
-            modeStatus.setText(a11y ? "独立模式已开启" : "点选下方模式");
+        if (LsposedState.isActive(this)) {
+            modeStatus.setText("LSPosed · 已激活，更新检查返回已最新");
+        } else if (LsposedState.hookFailed(this)) {
+            modeStatus.setText("LSPosed · 已注入，hook 未生效，OUC 可能已更新");
+        } else if (!lsposedInstalled()) {
+            modeStatus.setText("未检测到 LSPosed 管理器");
+        } else if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
+            modeStatus.setText("LSPosed · 已在管理器中关闭，点芯片打开");
+        } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
+            modeStatus.setText("LSPosed · 已启用，打开软件更新后生效");
         } else {
-            modeStatus.setText(a11y
-                    ? label + " · 独立模式已开启"
-                    : label + " · 独立模式未开启");
+            modeStatus.setText("LSPosed · 状态未知，点芯片打开管理器");
         }
     }
 
@@ -602,17 +395,8 @@ public class MainActivity extends Activity {
         if (modeStatus != null) {
             modeStatus.setText(message);
             if (statusRestore != null) uiHandler.removeCallbacks(statusRestore);
-            statusRestore = () -> updateModeStatus(isAccessibilityEnabled());
+            statusRestore = this::updateModeStatus;
             uiHandler.postDelayed(statusRestore, 4000L);
-        }
-    }
-
-    private boolean shizukuGranted() {
-        try {
-            return Shizuku.pingBinder()
-                    && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
-        } catch (Throwable t) {
-            return false;
         }
     }
 
@@ -620,33 +404,6 @@ public class MainActivity extends Activity {
         try {
             return getPackageManager().getLaunchIntentForPackage(LSPOSED_PACKAGE) != null
                     || getPackageManager().getPackageInfo(LSPOSED_PACKAGE, 0) != null;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    private boolean adbEnabled() {
-        try {
-            return Settings.Global.getInt(getContentResolver(),
-                    Settings.Global.ADB_ENABLED, 0) == 1;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    private boolean isAccessibilityEnabled() {
-        try {
-            if (Settings.Secure.getInt(getContentResolver(),
-                    Settings.Secure.ACCESSIBILITY_ENABLED, 0) != 1) {
-                return false;
-            }
-            String services = Settings.Secure.getString(getContentResolver(),
-                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-            if (services == null) return false;
-            String shortName = getPackageName() + "/.UpdateAccessibilityService";
-            String fullName = getPackageName() + "/"
-                    + UpdateAccessibilityService.class.getName();
-            return services.contains(shortName) || services.contains(fullName);
         } catch (Throwable t) {
             return false;
         }
@@ -719,275 +476,32 @@ public class MainActivity extends Activity {
     }
 
     private void refreshStatus() {
-        boolean a11y = isAccessibilityEnabled();
-
-        switchUpdating = true;
-        independentSwitch.setChecked(a11y);
-        switchUpdating = false;
-
-        if (a11y) {
-            modeTitle.setText("独立模式");
-            modeSubtitle.setText("更新页显示「已是最新」");
-            modeDot.setBackground(rounded(accent(), 999, 0));
-        } else if ("lsposed".equals(selectedMode)) {
+        if (LsposedState.isActive(this)) {
             modeTitle.setText("LSPosed");
-            if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
-                modeSubtitle.setText("已在管理器中关闭");
-                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
-            } else if (LsposedState.hookFailed(this)) {
-                modeSubtitle.setText("已注入，hook 未生效");
-                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
-            } else if (LsposedState.isActive(this)) {
-                modeSubtitle.setText("已激活，更新检查返回已最新");
-                modeDot.setBackground(rounded(accent(), 999, 0));
-            } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
-                modeSubtitle.setText("已启用，打开软件更新后生效");
-                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
-            } else {
-                modeSubtitle.setText("状态未知，点芯片打开管理器");
-                modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
-            }
-        } else {
-            modeTitle.setText("未启用");
-            modeSubtitle.setText("打开开关或点选下方通道");
+            modeSubtitle.setText("已激活，更新检查返回已最新");
+            modeDot.setBackground(rounded(accent(), 999, 0));
+        } else if (LsposedState.hookFailed(this)) {
+            modeTitle.setText("LSPosed");
+            modeSubtitle.setText("已注入，hook 未生效");
+            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+        } else if (!lsposedInstalled()) {
+            modeTitle.setText("未安装 LSPosed");
+            modeSubtitle.setText("需要 LSPosed 管理器");
             modeDot.setBackground(rounded(mutedDot(), 999, 0));
-        }
-        styleChips();
-        updateModeStatus(a11y);
-
-        checkRootAsync();
-    }
-
-    private void checkRootAsync() {
-        long now = System.currentTimeMillis();
-        if (rootCheckInFlight) return;
-        if (rootCheckAttempted && now - lastRootCheckAt < 30000L) return;
-        rootCheckInFlight = true;
-        rootCheckAttempted = true;
-        lastRootCheckAt = now;
-        new Thread(() -> {
-            boolean root = execute("id", null).contains("uid=0");
-            runOnUiThread(() -> {
-                rootCheckInFlight = false;
-                rootOk = root;
-                styleChips();
-                if (root) probeLsposed(true);
-            });
-        }).start();
-    }
-
-    private void enableIndependentMode() {
-        prefs.edit().putBoolean("user_disabled", false).apply();
-        if (shizukuGranted()) {
-            runShizukuEnable();
-            return;
-        }
-        if (rootOk) {
-            enableViaRoot();
-            return;
-        }
-        feedback("正在检查 Root…");
-        new Thread(() -> {
-            String out = execute("id", null);
-            boolean root = out.contains("uid=0");
-            runOnUiThread(() -> {
-                rootOk = root;
-                styleChips();
-                if (root && !prefs.getBoolean("user_disabled", false)
-                        && independentSwitch.isChecked()) {
-                    enableViaRoot();
-                } else if (root) {
-                    // The user turned the switch off while root was checked.
-                } else {
-                    switchUpdating = true;
-                    independentSwitch.setChecked(false);
-                    switchUpdating = false;
-                    feedback("未授权 Root/Shizuku，无法自动开启独立模式");
-                    refreshStatus();
-                }
-            });
-        }).start();
-    }
-
-    private void disableIndependentMode() {
-        prefs.edit().putBoolean("user_disabled", true).apply();
-        boolean enabled = isAccessibilityEnabled();
-        if (enabled && !UpdateAccessibilityService.disableSelfNow()) {
-            switchUpdating = true;
-            independentSwitch.setChecked(true);
-            switchUpdating = false;
-            feedback("请在系统中关闭凪的独立模式");
+        } else if (Boolean.FALSE.equals(lsposedManagerEnabled)) {
+            modeTitle.setText("LSPosed");
+            modeSubtitle.setText("已在管理器中关闭");
+            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
+        } else if (Boolean.TRUE.equals(lsposedManagerEnabled)) {
+            modeTitle.setText("LSPosed");
+            modeSubtitle.setText("已启用，打开软件更新后生效");
+            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
         } else {
-            switchUpdating = true;
-            independentSwitch.setChecked(false);
-            switchUpdating = false;
-            feedback(enabled ? "独立模式已关闭" : "已取消开启");
+            modeTitle.setText("LSPosed");
+            modeSubtitle.setText("状态未知，点芯片打开管理器");
+            modeDot.setBackground(rounded(0xFFD9A441, 999, 0));
         }
-        refreshStatus();
-    }
-
-    private String execute(String command, String[] prefix) {
-        Process p = null;
-        try {
-            String[] cmd = prefix == null
-                    ? new String[]{"su", "-c", command}
-                    : new String[]{prefix[0], prefix[1], prefix[2], command};
-            p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-            final Process process = p;
-            StringBuilder out = new StringBuilder();
-            Thread reader = new Thread(() -> {
-                try (BufferedReader r = new BufferedReader(
-                        new InputStreamReader(process.getInputStream()))) {
-                    String line;
-                    while ((line = r.readLine()) != null) out.append(line).append('\n');
-                } catch (Throwable ignored) {
-                }
-            });
-            reader.start();
-            boolean done = p.waitFor(15, TimeUnit.SECONDS);
-            if (!done) {
-                p.destroyForcibly();
-                return "超时";
-            }
-            reader.join(1000);
-            return out.toString().trim();
-        } catch (Throwable t) {
-            if (p != null) p.destroyForcibly();
-            return "失败：" + t;
-        }
-    }
-
-    /**
-     * Shizuku 13.1.5 has no public shell-exec API, so this calls the server's
-     * newProcess transaction directly. That interface is version-coupled:
-     * tested with Shizuku 13.7.0 (thedjchi). If a future Shizuku changes the
-     * transaction layout, the chip reports the failure and ADB / Root remain
-     * usable.
-     */
-    private String shizukuExec(String command) {
-        try {
-            IShizukuService service = IShizukuService.Stub.asInterface(Shizuku.getBinder());
-            moe.shizuku.server.IRemoteProcess process =
-                    service.newProcess(new String[]{"sh"}, null, null);
-            try (OutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(
-                    process.getOutputStream())) {
-                out.write(command.getBytes());
-            }
-            AtomicReference<String> stdout = new AtomicReference<>("");
-            AtomicReference<String> stderr = new AtomicReference<>("");
-            Thread t1 = new Thread(() -> {
-                try (BufferedReader r = new BufferedReader(new InputStreamReader(
-                        new ParcelFileDescriptor.AutoCloseInputStream(process.getInputStream())))) {
-                    StringBuilder sb = new StringBuilder();
-                    String line;
-                    while ((line = r.readLine()) != null) sb.append(line).append('\n');
-                    stdout.set(sb.toString());
-                } catch (Throwable ignored) {
-                }
-            });
-            Thread t2 = new Thread(() -> {
-                try (BufferedReader r = new BufferedReader(new InputStreamReader(
-                        new ParcelFileDescriptor.AutoCloseInputStream(process.getErrorStream())))) {
-                    StringBuilder sb = new StringBuilder();
-                    String line;
-                    while ((line = r.readLine()) != null) sb.append(line).append('\n');
-                    stderr.set(sb.toString());
-                } catch (Throwable ignored) {
-                }
-            });
-            AtomicInteger code = new AtomicInteger(-1);
-            CountDownLatch done = new CountDownLatch(1);
-            t1.start();
-            t2.start();
-            new Thread(() -> {
-                try {
-                    code.set(process.waitFor());
-                } catch (Throwable ignored) {
-                }
-                done.countDown();
-            }).start();
-            if (!done.await(15, TimeUnit.SECONDS)) {
-                try {
-                    process.destroy();
-                } catch (Throwable ignored) {
-                }
-                return "超时";
-            }
-            t1.join(1000);
-            t2.join(1000);
-            String text = stdout.get();
-            if (text.isEmpty()) text = stderr.get();
-            return "exit=" + code.get() + "\n" + text.trim();
-        } catch (Throwable t) {
-            return "失败：" + t;
-        }
-    }
-
-    /**
-     * Current accessibility service list plus 凪, preserving other services
-     * instead of overwriting them. The raw setting is restricted to characters
-     * legal in component names before it is embedded in a root shell command.
-     */
-    private String mergedAccessibilityServices() {
-        // The Java namespace stays com.nemu.updateguard while the application
-        // id is com.nemu.windstop, so the short ".Service" form would resolve
-        // to a class that does not exist. Always write the full class name.
-        String self = getPackageName() + "/"
-                + UpdateAccessibilityService.class.getName();
-        String current = null;
-        try {
-            current = Settings.Secure.getString(getContentResolver(),
-                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-        } catch (Throwable ignored) {
-        }
-        if (current != null) {
-            current = current.replaceAll("[^A-Za-z0-9._:/$-]", "");
-        }
-        if (current == null || current.isEmpty()) return self;
-        String full = getPackageName() + "/"
-                + UpdateAccessibilityService.class.getName();
-        for (String entry : current.split(":")) {
-            if (entry.equals(self) || entry.equals(full)) return current;
-        }
-        return current + ":" + self;
-    }
-
-    /** Shell command used by the Root and Shizuku chips. */
-    private String enableAccessibilityCommand() {
-        return "settings put secure enabled_accessibility_services '"
-                + mergedAccessibilityServices() + "'"
-                + " && settings put secure accessibility_enabled 1";
-    }
-
-    private int parseExit(String result) {
-        if (result == null || !result.startsWith("exit=")) return -1;
-        int nl = result.indexOf('\n');
-        String number = nl >= 0 ? result.substring(5, nl) : result.substring(5);
-        try {
-            return Integer.parseInt(number.trim());
-        } catch (Throwable t) {
-            return -1;
-        }
-    }
-
-    private String stripExit(String result) {
-        if (result == null) return "";
-        if (result.startsWith("exit=")) {
-            int nl = result.indexOf('\n');
-            return nl >= 0 ? result.substring(nl + 1) : "";
-        }
-        return result;
-    }
-
-    private String detail(String result) {
-        String body = stripExit(result);
-        for (String line : body.split("\n")) {
-            String trimmed = line.trim();
-            if (!trimmed.isEmpty()) {
-                return "：" + (trimmed.length() > 80
-                        ? trimmed.substring(0, 80) + "…" : trimmed);
-            }
-        }
-        return "";
+        styleLsposedChip();
+        updateModeStatus();
     }
 }

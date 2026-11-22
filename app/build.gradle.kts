@@ -19,8 +19,8 @@ android {
         applicationId = "com.nemu.windstop"
         minSdk = 30
         targetSdk = 36
-        versionCode = 10
-        versionName = "1.3.4"
+        versionCode = 11
+        versionName = "1.3.5"
     }
 
     signingConfigs {
@@ -59,6 +59,4 @@ android {
 
 dependencies {
     compileOnly(files("libs/api-82.jar"))
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
 }

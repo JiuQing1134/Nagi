@@ -3,7 +3,6 @@
 
     <queries>
         <package android:name="org.lsposed.manager" />
-        <package android:name="moe.shizuku.privileged.api" />
         <!-- Needed to verify the UID that reports the hook result. -->
         <package android:name="com.hihonor.ouc" />
     </queries>
@@ -27,19 +26,6 @@
             android:name=".HookReportService"
             android:exported="true" />
 
-        <service
-            android:name=".UpdateAccessibilityService"
-            android:exported="true"
-            android:label="@string/app_name"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
-
         <meta-data
             android:name="xposedmodule"
             android:value="true" />
@@ -53,12 +39,5 @@
         <meta-data
             android:name="xposedscope"
             android:resource="@array/xposed_scope" />
-
-        <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
-            android:exported="true"
-            android:multiprocess="false"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 </manifest>
